@@ -568,29 +568,69 @@ function buildRoster_(ss, cfg) {
   return roster;
 }
 
-/** 과목에 해당하는 응답 시트를 찾는다. 못 찾으면 null. */
-function findSubjectSheet_(ss, subj) {
+/**
+ * 과목에 해당하는 응답 시트를 찾는다. 못 찾으면 null.
+ *  1) 과목 시트에 "응답시트"가 적혀 있으면 그것
+ *  2) 시트 이름에 과목명이 들어 있으면 그것
+ *  3) 폼의 문항 제목과 헤더가 가장 많이 일치하는 시트
+ *  4) 과목이 하나뿐일 때에 한해, 유일한 응답 시트
+ * 찾으면 "응답시트" 칸에 적어 두어 다음부터는 1) 로 즉시 해결된다.
+ */
+function findSubjectSheet_(ss, subj, subjectCount) {
   var reserved = [SETTINGS_SHEET, SUBJECTS_SHEET, ROSTER_SHEET];
   if (subj.sheetName) return ss.getSheetByName(subj.sheetName);
-  var sheets = ss.getSheets(), i;
-  for (i = 0; i < sheets.length; i++) {
-    var n = sheets[i].getName();
-    if (reserved.indexOf(n) !== -1) continue;
-    if (n.indexOf(subj.name) !== -1) return sheets[i];
-  }
-  var cands = sheets.filter(function (s) {
-    var nm = s.getName();
-    return reserved.indexOf(nm) === -1 && /응답|Response/i.test(nm);
+
+  var cands = ss.getSheets().filter(function (sh) {
+    return reserved.indexOf(sh.getName()) === -1;
   });
-  if (cands.length === 1) return cands[0];
-  return null;
+  if (!cands.length) return null;
+
+  var i, found = null;
+  for (i = 0; i < cands.length; i++) {
+    if (cands[i].getName().indexOf(subj.name) !== -1) { found = cands[i]; break; }
+  }
+
+  if (!found && subj.editLink) found = matchSheetByQuestions_(cands, subj);
+
+  if (!found && subjectCount === 1) {
+    var single = cands.filter(function (sh) { return /응답|Response/i.test(sh.getName()); });
+    if (single.length === 1) found = single[0];
+  }
+
+  // 한 번 찾으면 과목 시트에 적어 둔다(다음 조회부터 탐색 비용 0)
+  if (found) { try { setSubjectCell_(subj, '응답시트', found.getName()); } catch (e) { /* 무시 */ } }
+  return found;
+}
+
+/** 폼 문항 제목과 시트 헤더가 가장 많이 겹치는 시트를 고른다. */
+function matchSheetByQuestions_(cands, subj) {
+  var titles = {}, n = 0;
+  try {
+    openForm_(subj.editLink, subj.name).getItems().forEach(function (it) {
+      var t = String(it.getTitle() || '').trim();
+      if (t && !titles[t]) { titles[t] = true; n++; }
+    });
+  } catch (e) { return null; }
+  if (!n) return null;
+
+  var best = null, bestHit = 0;
+  cands.forEach(function (sh) {
+    var lastCol = sh.getLastColumn();
+    if (lastCol < 1) return;
+    var header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+    var hit = 0;
+    header.forEach(function (h) { if (titles[String(h).trim()]) hit++; });
+    if (hit > bestHit) { bestHit = hit; best = sh; }
+  });
+  // 문항의 절반 이상이 일치할 때만 인정한다
+  return (best && bestHit >= Math.max(1, Math.ceil(n / 2))) ? best : null;
 }
 
 /* ===================================================================
  *  과목별 집계
  * =================================================================== */
 
-function aggregateSubject_(ss, cfg, subj, roster, day, dateSet) {
+function aggregateSubject_(ss, cfg, subj, roster, day, dateSet, subjectCount, used) {
   var base = {
     name: subj.name,
     open: subj.open,
@@ -604,12 +644,25 @@ function aggregateSubject_(ss, cfg, subj, roster, day, dateSet) {
     duplicates: 0
   };
 
-  var sh = findSubjectSheet_(ss, subj);
+  var sh = findSubjectSheet_(ss, subj, subjectCount);
   if (!sh) {
-    base.warning = '응답 시트를 찾지 못했습니다. 과목 시트의 "응답시트" 칸에 시트 이름을 적어 주십시오.';
+    base.warning = '응답 시트를 찾지 못했습니다. 이 과목의 구글폼 응답을 스프레드시트에 연결한 뒤, ' +
+                   '과목 시트의 "응답시트" 칸에 그 시트 이름을 적어 주십시오.';
     base.groups = emptyGroups_(roster);
     base.totals.expected = countRoster_(roster);
     return base;
+  }
+  // 두 과목이 같은 시트를 읽으면 한 과목 점수가 다른 과목에 잘못 표시된다 → 차단
+  if (used) {
+    var nm = sh.getName();
+    if (used[nm]) {
+      base.warning = '"' + nm + '" 시트를 이미 [' + used[nm] + '] 과목이 사용하고 있습니다. ' +
+                     '과목 시트의 "응답시트" 칸에 과목마다 서로 다른 시트를 지정하십시오.';
+      base.groups = emptyGroups_(roster);
+      base.totals.expected = countRoster_(roster);
+      return base;
+    }
+    used[nm] = subj.name;
   }
   base.sheetName = sh.getName();
 
@@ -777,9 +830,9 @@ function dashboard_(cfg, day) {
   var ss = SpreadsheetApp.getActive();
   var roster = buildRoster_(ss, cfg);
   var subs = subjects_(cfg);
-  var dateSet = {};
+  var dateSet = {}, used = {};
   var perSubject = subs.map(function (s) {
-    return aggregateSubject_(ss, cfg, s, roster, day, dateSet);
+    return aggregateSubject_(ss, cfg, s, roster, day, dateSet, subs.length, used);
   });
 
   return {
