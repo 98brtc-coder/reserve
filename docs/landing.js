@@ -48,6 +48,25 @@
     return a;
   }
 
+  // *별표*로 감싼 부분을 굵게. 그 외 태그는 모두 무해화한다.
+  function markup(text) {
+    return esc(text).replace(/\*([^*]+)\*/g, '<b>$1</b>');
+  }
+
+  function renderGuide(state) {
+    var lines = state && state.guide;
+    if (!lines) return;                       // 구버전 응답이면 HTML 기본 문구 유지
+    var sec = el('guide');
+    if (!lines.length) { sec.hidden = true; return; }
+    sec.hidden = false;
+    var h = el('guideTitle');
+    h.textContent = state.guideTitle || '';
+    h.hidden = !state.guideTitle;
+    el('guideList').innerHTML = lines.map(function (t) {
+      return '<li>' + markup(t) + '</li>';
+    }).join('');
+  }
+
   function render(state) {
     var wrap = el('cards');
     wrap.innerHTML = '';
@@ -91,6 +110,7 @@
   UNIT.api('state', { t: Date.now() }).then(function (s) {
     setUnit(s.unitName);
     setNotice(s.notice);
+    renderGuide(s);
     render(s);
   }).catch(function (err) {
     el('cards').innerHTML = '<p class="empty">상태를 확인하지 못했습니다.<br>' +
