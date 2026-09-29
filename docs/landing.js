@@ -3,6 +3,24 @@
   var CFG = UNIT.CFG;
   var el = function (id) { return document.getElementById(id); };
 
+  /* 지난번 상태를 저장해 두고 재방문 시 즉시 그린다.
+     Apps Script 응답이 1~3초 걸리므로 체감 속도가 크게 달라진다. */
+  var STATE_KEY = 'rf_state_v1';
+  var STALE_MS = 12 * 60 * 60 * 1000;      // 12시간 지난 캐시는 버린다
+  var isStale = false;                      // 캐시로 그린 상태인가
+
+  function saveCache(s) {
+    try { localStorage.setItem(STATE_KEY, JSON.stringify({ at: Date.now(), s: s })); }
+    catch (e) { /* 사생활 보호 모드 등 */ }
+  }
+  function loadCache() {
+    try {
+      var o = JSON.parse(localStorage.getItem(STATE_KEY) || 'null');
+      if (o && o.s && (Date.now() - o.at) < STALE_MS) return o.s;
+    } catch (e) { /* 무시 */ }
+    return null;
+  }
+
   function setUnit(name) {
     if (!name) return;
     el('unitName').textContent = name;
@@ -35,14 +53,17 @@
         '<span class="card-desc">' + opts.desc + '</span>' +
       '</span>' +
       '<span class="pill ' + (usable ? 'open' : 'shut') + '">' +
-        (usable ? '진행 중' : (opts.url ? '마감' : '준비 중')) + '</span>';
+        (usable ? '진행 중' : (isStale ? '확인 중' : (opts.url ? '마감' : '준비 중'))) + '</span>';
     if (usable) {
       a.href = opts.url;
     } else {
       a.href = '#';
       a.addEventListener('click', function (e) {
         e.preventDefault();
-        alert(opts.closedMsg || '아직 열려 있지 않습니다. 교관 안내에 따라 주십시오.');
+        // 아직 최신 상태를 못 받았으면 '마감'이라고 단정하지 않는다
+        alert(isStale
+          ? '최신 상태를 확인하고 있습니다. 잠시 후 다시 눌러 주십시오.'
+          : (opts.closedMsg || '아직 열려 있지 않습니다. 교관 안내에 따라 주십시오.'));
       });
     }
     return a;
@@ -107,14 +128,36 @@
     return;
   }
 
-  UNIT.api('state', { t: Date.now() }).then(function (s) {
+  function applyAll(s) {
     setUnit(s.unitName);
     setNotice(s.notice);
     renderGuide(s);
     render(s);
+  }
+
+  // ① 저장된 상태가 있으면 즉시 그린다 (정적 파일만 받으면 되므로 0.2초 수준)
+  var cached = loadCache();
+  if (cached) {
+    isStale = true;
+    applyAll(cached);
+    el('checking').hidden = false;
+  }
+
+  // ② 최신 상태를 받아 덮어쓴다
+  UNIT.fetchState().then(function (s) {
+    isStale = false;
+    el('checking').hidden = true;
+    applyAll(s);
+    saveCache(s);
   }).catch(function (err) {
-    el('cards').innerHTML = '<p class="empty">상태를 확인하지 못했습니다.<br>' +
-      '<small>' + esc(err.message) + '</small></p>';
+    el('checking').hidden = true;
+    if (!cached) {
+      el('cards').innerHTML = '<p class="empty">상태를 확인하지 못했습니다.<br>' +
+        '<small>' + esc(err.message) + '</small></p>';
+    } else {
+      isStale = false;
+      applyAll(cached);        // 최소한 지난 상태로는 쓸 수 있게 둔다
+    }
     console.warn('상태 확인 실패:', err);
   });
 })();

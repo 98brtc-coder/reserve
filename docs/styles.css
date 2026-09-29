@@ -281,3 +281,5 @@ td .sub-sub { display: block; font-size: 11px; color: var(--muted); }
 }
 .qdate.active { background: var(--active); border-color: var(--active); color: #fff; }
 input[type=date] { width: auto; min-width: 150px; }
+
+.checking { font-size: 12px; color: var(--muted); text-align: center; margin: 12px 0 0; }

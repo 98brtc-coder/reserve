@@ -45,5 +45,15 @@
     return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
 
-  window.UNIT = { CFG: CFG, api: api, hasApi: hasApi, fmt: fmt, timeText: timeText };
+  /* index.html 의 선행 요청 결과를 먼저 쓰고, 없거나 실패하면 정상 경로로 조회한다 */
+  async function fetchState() {
+    var early = window.__earlyState;
+    if (early) {
+      window.__earlyState = null;
+      try { return unwrap(await early); } catch (e) { /* 아래에서 재시도 */ }
+    }
+    return api('state', { t: Date.now() });
+  }
+
+  window.UNIT = { CFG: CFG, api: api, hasApi: hasApi, fmt: fmt, timeText: timeText, fetchState: fetchState };
 })();

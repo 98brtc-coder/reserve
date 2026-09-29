@@ -338,6 +338,7 @@
       wrap.innerHTML = '<p class="empty">과목 시트에 평가 과목을 등록하십시오.</p>';
       el('stSubmitted').textContent = el('stRate').textContent =
         el('stAvg').textContent = el('stBest').textContent = '-';
+      el('subjSheet').textContent = '';
       el('subjWarn').hidden = true;
       return;
     }
@@ -351,6 +352,9 @@
     var ranked = (s.groups || []).filter(function (g) { return g.average !== null; })
       .sort(function (a, b) { return b.average - a.average; });
     el('stBest').textContent = ranked.length ? ranked[0].group + '조' : '-';
+
+    // 어느 응답 시트를 읽고 있는지 늘 보이게 한다 (과목이 섞이는 사고 방지)
+    el('subjSheet').textContent = s.sheetName ? '응답 시트: ' + s.sheetName : '';
 
     if (s.warning) { el('subjWarn').textContent = '⚠ ' + s.warning; el('subjWarn').hidden = false; }
     else el('subjWarn').hidden = true;
