@@ -7,8 +7,6 @@
   var timer = null, auto = true, last = null, activeTab = 0;
   var activeView = 'eval', surveyData = null;
   var dateParam = '', pastMode = false, knownDates = [];
-  var chartMode = 'pie';
-  try { chartMode = localStorage.getItem('rf_chart') || 'pie'; } catch (e) {}
 
   document.title = (CFG.unitName ? CFG.unitName + ' ' : '') + '관리자';
 
@@ -188,21 +186,6 @@
       loadSurvey();
     }
   }
-  function paintChartToggle() {
-    Array.prototype.forEach.call(el('chartToggle').children, function (b) {
-      b.classList.toggle('active', b.getAttribute('data-mode') === chartMode);
-    });
-  }
-  Array.prototype.forEach.call(el('chartToggle').children, function (b) {
-    b.addEventListener('click', function () {
-      chartMode = b.getAttribute('data-mode');
-      try { localStorage.setItem('rf_chart', chartMode); } catch (e) {}
-      paintChartToggle();
-      if (surveyData) renderSurvey(surveyData);
-    });
-  });
-  paintChartToggle();
-
   el('viewEval').addEventListener('click', function () { setView('eval'); });
   el('viewSurvey').addEventListener('click', function () { setView('survey'); });
 
@@ -235,19 +218,33 @@
     (d.questions || []).forEach(function (q) { wrap.appendChild(questionCard(q)); });
   }
 
-  /* 도넛은 '부분-전체'일 때만 쓴다.
-     - 단일선택 객관식만 (복수선택은 합이 100%가 아니고, 척도형은 순서가 있다)
-     - 항목 6개 이하, 실제 응답이 있는 항목 3개 이상
-       (2조각 도넛·7색 이상은 읽기 어려워 막대가 낫다)
-     색은 폼에 정의된 항목 순서로 고정 배정해 항목↔색이 바뀌지 않게 한다. */
+  /* 단일선택 객관식은 항상 도넛으로 그린다.
+     복수선택(합이 100%가 아님)·척도형(순서가 있음)·그리드는 원형이
+     사실과 다른 그림이 되므로 막대를 유지한다. */
   function pieOK(q) {
-    if (chartMode !== 'pie') return false;
     if (q.type !== 'MULTIPLE_CHOICE' && q.type !== 'LIST') return false;
-    if (!q.options || !q.answered) return false;
-    if (q.options.length > 6) return false;
-    var nz = 0;
-    q.options.forEach(function (o) { if (o.count > 0) nz++; });
-    return nz >= 3;
+    return !!(q.options && q.options.length && q.answered);
+  }
+
+  /* 색은 6개까지만 쓴다(그 이상은 인접 색이 구분되지 않음).
+     항목이 7개 이상이면 상위 5개 + '기타'로 묶는다. */
+  function pieSlices(q) {
+    var opts = q.options.map(function (o, i) {
+      return { label: o.label, count: o.count, pct: o.pct, other: o.other, idx: i };
+    });
+    if (opts.length <= 6) return opts;
+
+    var sorted = opts.slice().sort(function (a, b) { return b.count - a.count; });
+    var top = sorted.slice(0, 5).sort(function (a, b) { return a.idx - b.idx; });
+    var rest = sorted.slice(5);
+    var sum = rest.reduce(function (a, o) { return a + o.count; }, 0);
+    top.push({
+      label: '기타 ' + rest.length + '개 항목',
+      count: sum,
+      pct: q.answered ? Math.round((sum / q.answered) * 1000) / 10 : 0,
+      folded: rest
+    });
+    return top;
   }
 
   function arcPath(cx, cy, R, r, a0, a1) {
@@ -265,38 +262,44 @@
 
   function donut(q) {
     var cx = 90, cy = 90, R = 78, r = 48, total = q.answered;
-    var slices = '', acc = 0, drawn = 0;
+    var slices = pieSlices(q);
+    var svg = '', acc = 0;
 
-    q.options.forEach(function (o, i) {
+    slices.forEach(function (o, i) {
       if (!o.count) return;
-      drawn++;
       var c = 'var(--c' + (i + 1) + ')';
       var tip = esc(o.label) + ' — ' + o.count + '명 (' + UNIT.fmt(o.pct, 1) + '%)';
       if (o.count === total) {                       // 한 항목이 100%
-        slices += '<circle cx="' + cx + '" cy="' + cy + '" r="' + ((R + r) / 2) +
-                  '" fill="none" stroke="' + c + '" stroke-width="' + (R - r) +
-                  '"><title>' + tip + '</title></circle>';
+        svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + ((R + r) / 2) +
+               '" fill="none" stroke="' + c + '" stroke-width="' + (R - r) +
+               '"><title>' + tip + '</title></circle>';
         return;
       }
       var a0 = (acc / total) * 2 * Math.PI - Math.PI / 2;
       acc += o.count;
       var a1 = (acc / total) * 2 * Math.PI - Math.PI / 2;
-      slices += '<path d="' + arcPath(cx, cy, R, r, a0, a1) + '" fill="' + c +
-                '" stroke="var(--surface)" stroke-width="2"><title>' + tip + '</title></path>';
+      svg += '<path d="' + arcPath(cx, cy, R, r, a0, a1) + '" fill="' + c +
+             '" stroke="var(--surface)" stroke-width="2"><title>' + tip + '</title></path>';
     });
 
-    var legend = q.options.map(function (o, i) {
+    var legend = slices.map(function (o, i) {
+      var sub = '';
+      if (o.folded) {
+        sub = '<span class="lsub">' + o.folded.map(function (f) {
+          return esc(f.label) + ' ' + f.count;
+        }).join(' · ') + '</span>';
+      }
       return '<li class="' + (o.count ? '' : 'zero') + '">' +
         '<span class="sw" style="background:var(--c' + (i + 1) + ')"></span>' +
         '<span class="lb">' + esc(o.label) +
-          (o.other ? '<span class="other-tag">기타 입력</span>' : '') + '</span>' +
+          (o.other ? '<span class="other-tag">기타 입력</span>' : '') + sub + '</span>' +
         '<span class="ln">' + o.count + '명</span>' +
         '<span class="lp">' + UNIT.fmt(o.pct, 1) + '%</span></li>';
     }).join('');
 
     return '<div class="pie-wrap">' +
       '<svg class="pie-svg" width="180" height="180" viewBox="0 0 180 180" role="img" ' +
-        'aria-label="' + esc(q.title) + ' 응답 분포">' + slices +
+        'aria-label="' + esc(q.title) + ' 응답 분포">' + svg +
         '<text x="90" y="86" text-anchor="middle" class="pie-center-v" fill="currentColor">' +
           total + '</text>' +
         '<text x="90" y="103" text-anchor="middle" class="pie-center-k" fill="currentColor" ' +
@@ -345,7 +348,8 @@
         ? '<ul class="answers">' + q.answers.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'
         : '<p class="qnote">아직 작성된 답변이 없습니다.</p>';
     } else if (q.options) {
-      if (q.multi) html += '<p class="qnote">복수 선택 문항 — 비율 합계가 100%를 넘을 수 있습니다.</p>';
+      if (q.multi) html += '<p class="qnote">복수 선택 문항 — 비율 합계가 100%를 넘어 ' +
+                           '원형으로 표시할 수 없어 막대로 보여 줍니다.</p>';
       html += pieOK(q) ? donut(q) : bars(q.options);
     } else {
       html += '<p class="qnote">집계할 수 없는 형식의 문항입니다.</p>';
