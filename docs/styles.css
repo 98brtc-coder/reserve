@@ -196,3 +196,18 @@ tr.best td { background: rgba(200, 162, 74, .12); }
 .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 20px 0; }
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .chip.extra { background: rgba(179, 38, 30, .12); color: var(--danger); font-weight: 700; }
+
+/* ── 과목 탭 · 종합 순위 ─────────────────────────────── */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tab {
+  font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+}
+.tab.active { background: var(--navy); border-color: var(--navy); color: #fff; }
+.tab .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--off); }
+.tab .dot.live { background: #2fbf71; }
+.hint { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 6px; }
+td .sub-rate { font-variant-numeric: tabular-nums; }
+td .sub-sub { display: block; font-size: 11px; color: var(--muted); }
+.switch.survey { border-color: rgba(74, 93, 58, .5); }

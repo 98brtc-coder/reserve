@@ -12,19 +12,15 @@
 <body>
 <main class="wrap wide">
 
-  <!-- 로그인 -->
   <section id="loginView" class="panel" style="max-width:420px;margin:40px auto;">
     <h2>교관 · 관리자 로그인</h2>
     <label for="pin">관리자 PIN</label>
     <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="PIN 입력">
-    <div class="row" style="margin-top:12px">
-      <button id="loginBtn" class="block">로그인</button>
-    </div>
+    <div class="row" style="margin-top:12px"><button id="loginBtn" class="block">로그인</button></div>
     <p id="loginMsg" class="msg"></p>
     <p class="msg" style="color:var(--muted)">PIN 은 구글 시트의 <b>설정</b> 탭에서 변경합니다.</p>
   </section>
 
-  <!-- 대시보드 -->
   <section id="dashView" hidden>
     <div class="topbar">
       <div>
@@ -33,58 +29,42 @@
       </div>
       <div class="row">
         <button id="refreshBtn" class="ghost">새로고침</button>
-        <button id="autoBtn" class="ghost">자동 끄기</button>
+        <button id="autoBtn" class="ghost">자동 새로고침 끄기</button>
         <button id="csvBtn" class="ghost">CSV 저장</button>
         <button id="logoutBtn" class="ghost">로그아웃</button>
       </div>
     </div>
 
     <div class="panel">
-      <h2>평가 · 설문 개폐</h2>
-      <div class="switches">
-        <div class="switch">
-          <div>
-            <div class="name">평가</div>
-            <div class="state" id="evalState">-</div>
-          </div>
-          <button id="evalToggle" disabled>-</button>
-        </div>
-        <div class="switch">
-          <div>
-            <div class="name">설문</div>
-            <div class="state" id="surveyState">-</div>
-          </div>
-          <button id="surveyToggle" disabled>-</button>
+      <div class="row" style="justify-content:space-between;margin-bottom:12px">
+        <h2 style="margin:0">평가 · 설문 개폐</h2>
+        <div class="row">
+          <button id="allOpenBtn" class="on">평가 전체 열기</button>
+          <button id="allCloseBtn" class="off">평가 전체 닫기</button>
         </div>
       </div>
+      <div class="switches" id="switches"></div>
       <p id="toggleMsg" class="msg"></p>
     </div>
 
-    <div class="stats" style="margin-bottom:16px">
-      <div class="stat"><div class="k">제출</div><div class="v" id="stSubmitted">-</div></div>
-      <div class="stat"><div class="k">참여율</div><div class="v" id="stRate">-</div></div>
-      <div class="stat"><div class="k">전체 평균</div><div class="v" id="stAvg">-</div></div>
-      <div class="stat"><div class="k">우수 조</div><div class="v" id="stBest">-</div></div>
+    <div class="panel">
+      <h2>종합 순위 <span class="hint">과목별 득점률(%) 평균</span></h2>
+      <div class="scroll"><table id="combinedTable"><thead></thead><tbody></tbody></table></div>
+      <p id="combinedNote" class="msg" style="color:var(--muted)"></p>
     </div>
 
     <div class="panel">
-      <h2>조별 순위</h2>
-      <div class="scroll">
-        <table id="rankTable">
-          <thead>
-            <tr>
-              <th class="num">순위</th><th>조</th><th class="num">평균</th>
-              <th class="num">제출</th><th style="min-width:110px">진행률</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <div class="row" style="justify-content:space-between;margin-bottom:12px">
+        <h2 style="margin:0">과목별 현황</h2>
+        <div class="tabs" id="tabs"></div>
       </div>
-      <p id="rankEmpty" class="empty" hidden>아직 제출된 평가가 없습니다.</p>
-    </div>
-
-    <div class="panel">
-      <h2>조별 제출 현황</h2>
+      <div class="stats" style="margin-bottom:16px">
+        <div class="stat"><div class="k">제출</div><div class="v" id="stSubmitted">-</div></div>
+        <div class="stat"><div class="k">참여율</div><div class="v" id="stRate">-</div></div>
+        <div class="stat"><div class="k">평균 점수</div><div class="v" id="stAvg">-</div></div>
+        <div class="stat"><div class="k">1위 조</div><div class="v" id="stBest">-</div></div>
+      </div>
+      <p id="subjWarn" class="msg err" hidden></p>
       <div class="groups" id="groupCards"></div>
     </div>
 
@@ -93,7 +73,7 @@
       <p class="msg" style="color:var(--muted)">번호 형식이 잘못되어 조에 반영되지 않은 응답입니다.</p>
       <div class="scroll">
         <table id="unknownTable">
-          <thead><tr><th>입력값</th><th class="num">점수</th><th>제출시각</th></tr></thead>
+          <thead><tr><th>과목</th><th>입력값</th><th class="num">점수</th><th>제출시각</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
