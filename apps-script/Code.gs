@@ -2,38 +2,41 @@
  * =====================================================================
  *  예비군 평가 · 설문 관리 백엔드 (Google Apps Script)
  * =====================================================================
- *  설치: 평가 구글폼의 "응답 → 스프레드시트로 연결"로 만들어진 시트에서
- *        확장 프로그램 → Apps Script → 이 코드를 붙여넣고 setup() 실행.
- *        이후 배포 → 새 배포 → 웹 앱 (실행: 나, 액세스: 모든 사용자)
- *        받은 /exec 주소를 docs/config.js 의 apiUrl 에 입력.
+ *  평가 과목 여러 개를 각각 열고 닫으며, 조별 득점률 평균으로
+ *  종합 순위(우수 조)를 산출한다.
+ *
+ *  설치: 응답 스프레드시트 → 확장 프로그램 → Apps Script → 붙여넣기
+ *        → setup() 실행 → 배포 → 웹 앱(실행: 나 / 액세스: 모든 사용자)
  * =====================================================================
  */
 
 var SETTINGS_SHEET = '설정';
+var SUBJECTS_SHEET = '과목';
 var ROSTER_SHEET = '명단';
-var STATE_CACHE_KEY = 'public_state_v1';
-var STATE_CACHE_SEC = 15;
+var STATE_CACHE_KEY = 'public_state_v2';
+var STATE_CACHE_SEC = 5;
 
-/** 설정 시트 기본값: [항목, 값, 설명] */
 var DEFAULTS = [
-  ['부대명', '○○예비군훈련대', '첫 화면 상단에 표시됩니다.'],
+  ['부대명', '서산 과학화 예비군훈련대', '첫 화면 상단에 표시됩니다.'],
   ['관리자PIN', '1234', '교관용 로그인 PIN. 반드시 변경하십시오.'],
-  ['평가폼_편집링크', '', '평가 구글폼의 편집 주소(.../edit). 열기/닫기에 사용됩니다.'],
   ['설문폼_편집링크', '', '설문 구글폼의 편집 주소(.../edit).'],
-  ['평가폼_응시링크', '', '비워두면 편집링크에서 자동으로 채워집니다.'],
   ['설문폼_응시링크', '', '비워두면 편집링크에서 자동으로 채워집니다.'],
-  ['평가개방', '아니오', '예 / 아니오. 관리자 화면에서 바꾸는 값입니다.'],
-  ['설문개방', '아니오', '예 / 아니오.'],
-  ['평가마감안내', '평가 시간이 아닙니다. 교관 안내에 따라 주십시오.', '마감 시 화면에 표시할 문구.'],
-  ['설문마감안내', '설문 시간이 아닙니다. 교관 안내에 따라 주십시오.', '마감 시 화면에 표시할 문구.'],
-  ['공지', '', '첫 화면에 띄울 공지. 비워두면 표시되지 않습니다.'],
+  ['설문개방', '아니오', '예 / 아니오. 관리자 화면에서 바뀝니다.'],
+  ['평가마감안내', '평가 시간이 아닙니다. 교관 안내에 따라 주십시오.', '평가 마감 시 문구.'],
+  ['설문마감안내', '설문 시간이 아닙니다. 교관 안내에 따라 주십시오.', '설문 마감 시 문구.'],
+  ['공지', '', '첫 화면 공지. 비워두면 표시되지 않습니다.'],
   ['조개수', '10', '전체 조 수(m). 명단 시트가 있으면 명단이 우선합니다.'],
   ['조별인원', '10', '조당 인원(n).'],
-  ['평가응답시트', '', '평가 응답이 기록되는 시트 이름. 비우면 자동 탐색.'],
-  ['번호열', '', '번호(조-번)가 들어있는 열 제목. 비우면 자동 탐색.'],
-  ['점수열', '', '점수 열 제목 또는 열 번호를 쉼표로. 비우면 자동 탐색.'],
-  ['점수계산', '합계', '합계 / 평균 — 점수열이 여러 개일 때 계산 방식.'],
-  ['만점', '', '표시용 만점. 퀴즈형 폼이면 자동으로 인식됩니다.']
+  ['번호열', '', '번호(조-번) 열 제목. 비우면 자동 탐색.'],
+  ['점수열', '', '점수 열 제목/번호를 쉼표로. 비우면 자동 탐색.'],
+  ['점수계산', '합계', '합계 / 평균 — 점수열이 여러 개일 때.']
+];
+
+var SUBJECT_HEADER = ['과목명', '폼_편집링크', '폼_응시링크', '응답시트', '만점', '개방'];
+var SUBJECT_DEFAULTS = [
+  ['안보교육', '', '', '', '', '아니오'],
+  ['전투부상자처치', '', '', '', '', '아니오'],
+  ['전시동원절차', '', '', '', '', '아니오']
 ];
 
 /* ===================================================================
@@ -42,51 +45,69 @@ var DEFAULTS = [
 
 function setup() {
   var ss = SpreadsheetApp.getActive();
-  var sh = ss.getSheetByName(SETTINGS_SHEET);
+  ensureKeyValueSheet_(ss, SETTINGS_SHEET, DEFAULTS);
+  ensureTableSheet_(ss, SUBJECTS_SHEET, SUBJECT_HEADER, SUBJECT_DEFAULTS);
+  ss.toast('설정 / 과목 시트를 준비했습니다. 값을 채운 뒤 배포하십시오.', '설치 완료', 8);
+  return '준비 완료';
+}
+
+function ensureKeyValueSheet_(ss, name, defaults) {
+  var sh = ss.getSheetByName(name);
   if (!sh) {
-    sh = ss.insertSheet(SETTINGS_SHEET, 0);
-    sh.getRange(1, 1, 1, 3).setValues([['항목', '값', '설명']]);
-    sh.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#16243a').setFontColor('#ffffff');
+    sh = ss.insertSheet(name, 0);
+    sh.getRange(1, 1, 1, 3).setValues([['항목', '값', '설명']])
+      .setFontWeight('bold').setBackground('#16243a').setFontColor('#ffffff');
     sh.setFrozenRows(1);
-    sh.getRange(2, 1, DEFAULTS.length, 3).setValues(DEFAULTS);
-    sh.setColumnWidth(1, 150).setColumnWidth(2, 320).setColumnWidth(3, 420);
-    sh.getRange(2, 3, DEFAULTS.length, 1).setFontColor('#888888').setFontSize(9);
-  } else {
-    // 이미 있으면 빠진 항목만 추가
-    var have = {};
-    var rows = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues() : [];
-    rows.forEach(function (r) { have[String(r[0]).trim()] = true; });
-    var add = DEFAULTS.filter(function (d) { return !have[d[0]]; });
-    if (add.length) sh.getRange(sh.getLastRow() + 1, 1, add.length, 3).setValues(add);
+    sh.getRange(2, 1, defaults.length, 3).setValues(defaults);
+    sh.setColumnWidth(1, 150).setColumnWidth(2, 330).setColumnWidth(3, 420);
+    sh.getRange(2, 3, defaults.length, 1).setFontColor('#888888').setFontSize(9);
+    return sh;
   }
-  SpreadsheetApp.getActive().toast('설정 시트를 준비했습니다. 값을 채운 뒤 배포하십시오.', '설치 완료', 8);
-  return '설정 시트 준비 완료';
+  var have = {};
+  if (sh.getLastRow() > 1) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues()
+      .forEach(function (r) { have[String(r[0]).trim()] = true; });
+  }
+  var add = defaults.filter(function (d) { return !have[d[0]]; });
+  if (add.length) sh.getRange(sh.getLastRow() + 1, 1, add.length, 3).setValues(add);
+  return sh;
+}
+
+function ensureTableSheet_(ss, name, header, defaults) {
+  var sh = ss.getSheetByName(name);
+  if (sh) return sh;
+  sh = ss.insertSheet(name, 1);
+  sh.getRange(1, 1, 1, header.length).setValues([header])
+    .setFontWeight('bold').setBackground('#4a5d3a').setFontColor('#ffffff');
+  sh.setFrozenRows(1);
+  sh.getRange(2, 1, defaults.length, header.length).setValues(defaults);
+  sh.setColumnWidth(1, 160).setColumnWidth(2, 330).setColumnWidth(3, 330).setColumnWidth(4, 200);
+  return sh;
 }
 
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('예비군 평가')
-    .addItem('설정 시트 준비 / 갱신', 'setup')
+  SpreadsheetApp.getUi().createMenu('예비군 평가')
+    .addItem('설정 / 과목 시트 준비', 'setup')
     .addSeparator()
-    .addItem('평가 열기', 'menuEvalOpen')
-    .addItem('평가 닫기', 'menuEvalClose')
+    .addItem('평가 전체 열기', 'menuAllOpen')
+    .addItem('평가 전체 닫기', 'menuAllClose')
     .addItem('설문 열기', 'menuSurveyOpen')
     .addItem('설문 닫기', 'menuSurveyClose')
     .addSeparator()
-    .addItem('현황 요약 보기', 'menuSummary')
+    .addItem('종합 순위 보기', 'menuSummary')
     .addToUi();
 }
 
-function menuEvalOpen() { menuToggle_('eval', true); }
-function menuEvalClose() { menuToggle_('eval', false); }
-function menuSurveyOpen() { menuToggle_('survey', true); }
-function menuSurveyClose() { menuToggle_('survey', false); }
+function menuAllOpen() { menuToggle_('subjects', '', true); }
+function menuAllClose() { menuToggle_('subjects', '', false); }
+function menuSurveyOpen() { menuToggle_('survey', '', true); }
+function menuSurveyClose() { menuToggle_('survey', '', false); }
 
-function menuToggle_(target, open) {
+function menuToggle_(target, name, open) {
   try {
-    toggle_(readConfig_(), target, open);
+    var r = toggleAny_(readConfig_(), target, name, open);
     SpreadsheetApp.getActive().toast(
-      (target === 'eval' ? '평가' : '설문') + '을(를) ' + (open ? '열었습니다.' : '닫았습니다.'), '완료', 5);
+      (open ? '열었습니다.' : '닫았습니다.') + (r.warning ? ' (' + r.warning + ')' : ''), '완료', 6);
   } catch (err) {
     SpreadsheetApp.getUi().alert('실패: ' + err.message);
   }
@@ -94,15 +115,19 @@ function menuToggle_(target, open) {
 
 function menuSummary() {
   var d = dashboard_(readConfig_());
-  var lines = ['제출 ' + d.totals.submitted + ' / ' + d.totals.expected +
-               '   전체평균 ' + round_(d.totals.average, 2), ''];
-  d.groups.slice().sort(function (a, b) { return (b.average || -1) - (a.average || -1); })
+  var lines = [];
+  d.combined.groups.slice()
+    .sort(function (a, b) { return (b.overall === null ? -1 : b.overall) - (a.overall === null ? -1 : a.overall); })
     .forEach(function (g, i) {
-      lines.push((i + 1) + '위  ' + g.group + '조   평균 ' + round_(g.average, 2) +
-                 '   (' + g.submitted + '/' + g.expected + ')');
+      lines.push((i + 1) + '위  ' + g.group + '조   종합 ' +
+                 (g.overall === null ? '-' : g.overall + '%') +
+                 (g.complete ? '' : '  (미완)'));
     });
-  if (d.unknown.length) lines.push('', '※ 번호 오류 응답 ' + d.unknown.length + '건');
-  SpreadsheetApp.getUi().alert('평가 현황', lines.join('\n'), SpreadsheetApp.getUi().ButtonSet.OK);
+  if (d.combined.missingMax.length) {
+    lines.push('', '※ 만점 미설정으로 종합에서 제외된 과목: ' + d.combined.missingMax.join(', '));
+  }
+  SpreadsheetApp.getUi().alert('종합 순위', lines.join('\n') || '집계할 응답이 없습니다.',
+    SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 /* ===================================================================
@@ -115,9 +140,7 @@ function doPost(e) {
   var p = {};
   try {
     if (e && e.postData && e.postData.contents) p = JSON.parse(e.postData.contents);
-  } catch (err) {
-    p = (e && e.parameter) || {};
-  }
+  } catch (err) { p = (e && e.parameter) || {}; }
   return handle_(p);
 }
 
@@ -135,8 +158,7 @@ function handle_(p) {
       var lock = LockService.getScriptLock();
       lock.waitLock(20000);
       try {
-        var st = toggle_(cfg, String(p.target || ''), truthy_(p.open));
-        return json_({ ok: true, data: st });
+        return json_({ ok: true, data: toggleAny_(cfg, String(p.target || ''), p.name, truthy_(p.open)) });
       } finally { lock.releaseLock(); }
     }
     throw new Error('알 수 없는 요청입니다: ' + action);
@@ -157,7 +179,7 @@ function requirePin_(cfg, given) {
 }
 
 /* ===================================================================
- *  설정 읽기 · 쓰기
+ *  설정 · 과목 읽기/쓰기
  * =================================================================== */
 
 function settingsSheet_() {
@@ -182,12 +204,55 @@ function setConfig_(key, value) {
   var n = sh.getLastRow() - 1;
   var keys = n > 0 ? sh.getRange(2, 1, n, 1).getValues() : [];
   for (var i = 0; i < keys.length; i++) {
-    if (String(keys[i][0]).trim() === key) {
-      sh.getRange(i + 2, 2).setValue(value);
-      return;
-    }
+    if (String(keys[i][0]).trim() === key) { sh.getRange(i + 2, 2).setValue(value); return; }
   }
   sh.getRange(sh.getLastRow() + 1, 1, 1, 2).setValues([[key, value]]);
+}
+
+/** 과목 시트를 읽는다. 없으면 구버전 설정(평가폼_편집링크)으로 1과목 구성. */
+function subjects_(cfg) {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(SUBJECTS_SHEET);
+  var list = [];
+  if (sh && sh.getLastRow() > 1) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, SUBJECT_HEADER.length).getValues()
+      .forEach(function (r, i) {
+        var name = String(r[0] || '').trim();
+        if (!name) return;
+        list.push({
+          row: i + 2, name: name,
+          editLink: String(r[1] || '').trim(),
+          viewLink: String(r[2] || '').trim(),
+          sheetName: String(r[3] || '').trim(),
+          maxScore: toNumber_(r[4]),
+          open: truthy_(r[5])
+        });
+      });
+  }
+  if (list.length) return list;
+
+  var legacy = String(cfg['평가폼_편집링크'] || '').trim();
+  if (!legacy) return [];
+  return [{
+    row: 0, legacy: true, name: '평가',
+    editLink: legacy,
+    viewLink: String(cfg['평가폼_응시링크'] || '').trim(),
+    sheetName: String(cfg['평가응답시트'] || '').trim(),
+    maxScore: toNumber_(cfg['만점']),
+    open: truthy_(cfg['평가개방'])
+  }];
+}
+
+function setSubjectCell_(subj, colName, value) {
+  if (subj.legacy) {
+    if (colName === '개방') setConfig_('평가개방', value);
+    if (colName === '폼_응시링크') setConfig_('평가폼_응시링크', value);
+    return;
+  }
+  var sh = SpreadsheetApp.getActive().getSheetByName(SUBJECTS_SHEET);
+  if (!sh) return;
+  var col = SUBJECT_HEADER.indexOf(colName) + 1;
+  if (col > 0 && subj.row > 1) sh.getRange(subj.row, col).setValue(value);
 }
 
 function truthy_(v) {
@@ -196,7 +261,7 @@ function truthy_(v) {
 }
 
 function round_(n, d) {
-  if (n === null || n === undefined || isNaN(n)) return '-';
+  if (n === null || n === undefined || isNaN(n)) return null;
   var f = Math.pow(10, d === undefined ? 1 : d);
   return Math.round(n * f) / f;
 }
@@ -208,9 +273,7 @@ function round_(n, d) {
 function cachedState_() {
   var cache = CacheService.getScriptCache();
   var hit = cache.get(STATE_CACHE_KEY);
-  if (hit) {
-    try { return JSON.parse(hit); } catch (e) { /* 무시 */ }
-  }
+  if (hit) { try { return JSON.parse(hit); } catch (e) { /* 무시 */ } }
   var st = publicState_(readConfig_());
   cache.put(STATE_CACHE_KEY, JSON.stringify(st), STATE_CACHE_SEC);
   return st;
@@ -220,40 +283,50 @@ function publicState_(cfg) {
   return {
     unitName: String(cfg['부대명'] || ''),
     notice: String(cfg['공지'] || ''),
-    evalOpen: truthy_(cfg['평가개방']),
-    surveyOpen: truthy_(cfg['설문개방']),
     evalClosedMessage: String(cfg['평가마감안내'] || ''),
-    surveyClosedMessage: String(cfg['설문마감안내'] || ''),
-    evalFormUrl: viewUrl_(cfg, '평가'),
-    surveyFormUrl: viewUrl_(cfg, '설문')
+    subjects: subjects_(cfg).map(function (s) {
+      return { name: s.name, open: s.open, url: subjectViewUrl_(s) };
+    }),
+    survey: {
+      open: truthy_(cfg['설문개방']),
+      url: surveyViewUrl_(cfg),
+      closedMessage: String(cfg['설문마감안내'] || '')
+    }
   };
 }
 
-/** 응시링크가 비어 있으면 편집링크에서 한 번 구해 설정 시트에 적어 둔다. */
-function viewUrl_(cfg, prefix) {
-  var cached = String(cfg[prefix + '폼_응시링크'] || '').trim();
+function subjectViewUrl_(s) {
+  if (s.viewLink) return s.viewLink;
+  if (!s.editLink) return '';
+  try {
+    var url = openForm_(s.editLink, s.name).getPublishedUrl();
+    setSubjectCell_(s, '폼_응시링크', url);
+    return url;
+  } catch (err) { return ''; }
+}
+
+function surveyViewUrl_(cfg) {
+  var cached = String(cfg['설문폼_응시링크'] || '').trim();
   if (cached) return cached;
-  var edit = String(cfg[prefix + '폼_편집링크'] || '').trim();
+  var edit = String(cfg['설문폼_편집링크'] || '').trim();
   if (!edit) return '';
   try {
-    var url = openForm_(edit, prefix + '폼').getPublishedUrl();
-    setConfig_(prefix + '폼_응시링크', url);
+    var url = openForm_(edit, '설문폼').getPublishedUrl();
+    setConfig_('설문폼_응시링크', url);
     return url;
-  } catch (err) {
-    return '';
-  }
+  } catch (err) { return ''; }
 }
 
 /* ===================================================================
- *  평가 · 설문 개폐
+ *  개폐
  * =================================================================== */
 
 function openForm_(url, label) {
   var s = String(url || '').trim();
-  if (!s) throw new Error(label + ' 편집링크가 설정 시트에 비어 있습니다.');
+  if (!s) throw new Error(label + ' 편집링크가 비어 있습니다.');
   if (s.indexOf('/d/e/') !== -1) {
-    throw new Error(label + ' 링크가 응시용 링크입니다. 폼을 편집 상태로 열었을 때 주소창에 보이는 ' +
-                    '편집 링크(.../edit)를 설정 시트에 넣어 주십시오.');
+    throw new Error(label + ' 링크가 응시용 링크입니다. 폼을 편집 상태로 열었을 때 주소창에 ' +
+                    '보이는 편집 링크(.../edit)를 넣어 주십시오.');
   }
   var m = s.match(/\/d\/([a-zA-Z0-9_-]{15,})/);
   var id = m ? m[1] : (/^[a-zA-Z0-9_-]{15,}$/.test(s) ? s : null);
@@ -261,67 +334,86 @@ function openForm_(url, label) {
   return FormApp.openById(id);
 }
 
-function toggle_(cfg, target, open) {
-  var prefix = target === 'eval' ? '평가' : target === 'survey' ? '설문' : null;
-  if (!prefix) throw new Error('대상이 올바르지 않습니다: ' + target);
-
-  // 구글폼 자체의 응답 수락을 끄고 켠다 (링크를 직접 아는 경우도 차단됨)
-  var editLink = String(cfg[prefix + '폼_편집링크'] || '').trim();
-  var form = null;
-  if (editLink) {
-    form = openForm_(editLink, prefix + '폼');
-    form.setAcceptingResponses(open);
-  }
-
-  // 사이트 표시 상태는 폼 상태와 반드시 함께 바뀌어야 하므로 먼저 확정한다
-  setConfig_(prefix + '개방', open ? '예' : '아니오');
-  CacheService.getScriptCache().remove(STATE_CACHE_KEY);
-
-  // 마감 안내 문구는 부가 기능이다. 실패해도 개폐 자체를 막지 않는다.
-  var warning = '';
-  if (form && !open) {
-    var msg = String(cfg[prefix + '마감안내'] || '').trim();
-    if (msg) {
-      try {
-        form.setCustomClosedFormMessage(msg);
-      } catch (err) {
-        warning = '마감 안내 문구는 적용하지 못했습니다(개폐는 정상 처리됨): ' +
-                  ((err && err.message) ? err.message : err);
+/** 새 구글폼은 "게시" 후에만 응답을 받을 수 있으므로 열 때 게시를 먼저 시도한다. */
+function setAccepting_(form, open, label) {
+  if (open) {
+    try {
+      if (typeof form.setPublished === 'function') {
+        var published = (typeof form.isPublished === 'function') ? form.isPublished() : false;
+        if (!published) form.setPublished(true);
       }
-    }
+    } catch (e) { /* 아래에서 안내 */ }
   }
+  try {
+    form.setAcceptingResponses(open);
+  } catch (err) {
+    var m = String((err && err.message) ? err.message : err);
+    if (/게시|publish/i.test(m)) {
+      throw new Error(label + ' 폼이 아직 게시되지 않았습니다. 폼 편집 화면 우측 상단의 ' +
+                      '"게시(Publish)" 버튼을 한 번 눌러 게시한 뒤 다시 시도하십시오.');
+    }
+    throw err;
+  }
+}
 
-  var fresh = readConfig_();
-  return {
-    evalOpen: truthy_(fresh['평가개방']),
-    surveyOpen: truthy_(fresh['설문개방']),
-    formLinked: !!editLink,
-    warning: warning
-  };
+function applyClosedMessage_(form, msg, label, warnings) {
+  if (!form || !msg) return;
+  try {
+    form.setCustomClosedFormMessage(msg);
+  } catch (err) {
+    warnings.push(label + ' 마감 안내 문구는 적용하지 못했습니다(개폐는 정상 처리됨)');
+  }
+}
+
+function toggleSubject_(cfg, s, open, warnings) {
+  var form = null;
+  if (s.editLink) {
+    form = openForm_(s.editLink, s.name);
+    setAccepting_(form, open, s.name);
+  } else {
+    warnings.push(s.name + ' 은(는) 폼 편집링크가 없어 화면 표시만 바뀝니다');
+  }
+  setSubjectCell_(s, '개방', open ? '예' : '아니오');
+  if (!open) applyClosedMessage_(form, String(cfg['평가마감안내'] || '').trim(), s.name, warnings);
+}
+
+function toggleSurvey_(cfg, open, warnings) {
+  var form = null;
+  var edit = String(cfg['설문폼_편집링크'] || '').trim();
+  if (edit) {
+    form = openForm_(edit, '설문폼');
+    setAccepting_(form, open, '설문');
+  } else {
+    warnings.push('설문 폼 편집링크가 없어 화면 표시만 바뀝니다');
+  }
+  setConfig_('설문개방', open ? '예' : '아니오');
+  if (!open) applyClosedMessage_(form, String(cfg['설문마감안내'] || '').trim(), '설문', warnings);
+}
+
+function toggleAny_(cfg, target, name, open) {
+  var warnings = [];
+  if (target === 'survey') {
+    toggleSurvey_(cfg, open, warnings);
+  } else if (target === 'subjects') {
+    var all = subjects_(cfg);
+    if (!all.length) throw new Error('과목 시트에 등록된 평가 과목이 없습니다.');
+    all.forEach(function (s) { toggleSubject_(cfg, s, open, warnings); });
+  } else if (target === 'subject') {
+    var want = String(name || '').trim();
+    var hit = null;
+    subjects_(cfg).forEach(function (s) { if (s.name === want) hit = s; });
+    if (!hit) throw new Error('과목을 찾을 수 없습니다: ' + want);
+    toggleSubject_(cfg, hit, open, warnings);
+  } else {
+    throw new Error('대상이 올바르지 않습니다: ' + target);
+  }
+  CacheService.getScriptCache().remove(STATE_CACHE_KEY);
+  return { warning: warnings.join(' / '), state: publicState_(readConfig_()) };
 }
 
 /* ===================================================================
- *  평가 현황 집계
+ *  집계 공용 유틸
  * =================================================================== */
-
-function responseSheet_(ss, name) {
-  if (name) {
-    var sh = ss.getSheetByName(String(name).trim());
-    if (!sh) throw new Error('"' + name + '" 시트를 찾을 수 없습니다. 설정 시트의 평가응답시트 값을 확인하십시오.');
-    return sh;
-  }
-  var sheets = ss.getSheets();
-  for (var i = 0; i < sheets.length; i++) {
-    var n = sheets[i].getName();
-    if (n === SETTINGS_SHEET || n === ROSTER_SHEET) continue;
-    if (/응답|Response/i.test(n)) return sheets[i];
-  }
-  for (var j = 0; j < sheets.length; j++) {
-    var nm = sheets[j].getName();
-    if (nm !== SETTINGS_SHEET && nm !== ROSTER_SHEET) return sheets[j];
-  }
-  throw new Error('평가 응답 시트를 찾을 수 없습니다.');
-}
 
 /** "3-7", "3 - 7", "3조 7번" 등을 {g:'3', n:7} 로 정규화 */
 function parseNo_(v) {
@@ -412,7 +504,7 @@ function findScoreColumns_(header, rows, noIdx, cfgSpec) {
 
 /** 명단 시트(A열 = 번호) 또는 조개수 × 조별인원 으로 정원을 만든다. */
 function buildRoster_(ss, cfg) {
-  var roster = {};   // { '1': [1,2,3,...], ... }
+  var roster = {};
   var sh = ss.getSheetByName(ROSTER_SHEET);
   if (sh && sh.getLastRow() > 1) {
     sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().forEach(function (r) {
@@ -437,28 +529,71 @@ function buildRoster_(ss, cfg) {
   return roster;
 }
 
-function dashboard_(cfg) {
-  var ss = SpreadsheetApp.getActive();
-  var sh = responseSheet_(ss, cfg['평가응답시트']);
-  var roster = buildRoster_(ss, cfg);
+/** 과목에 해당하는 응답 시트를 찾는다. 못 찾으면 null. */
+function findSubjectSheet_(ss, subj) {
+  var reserved = [SETTINGS_SHEET, SUBJECTS_SHEET, ROSTER_SHEET];
+  if (subj.sheetName) return ss.getSheetByName(subj.sheetName);
+  var sheets = ss.getSheets(), i;
+  for (i = 0; i < sheets.length; i++) {
+    var n = sheets[i].getName();
+    if (reserved.indexOf(n) !== -1) continue;
+    if (n.indexOf(subj.name) !== -1) return sheets[i];
+  }
+  var cands = sheets.filter(function (s) {
+    var nm = s.getName();
+    return reserved.indexOf(nm) === -1 && /응답|Response/i.test(nm);
+  });
+  if (cands.length === 1) return cands[0];
+  return null;
+}
+
+/* ===================================================================
+ *  과목별 집계
+ * =================================================================== */
+
+function aggregateSubject_(ss, cfg, subj, roster) {
+  var base = {
+    name: subj.name,
+    open: subj.open,
+    formLinked: !!subj.editLink,
+    maxScore: subj.maxScore,
+    sheetName: '',
+    warning: '',
+    totals: { expected: 0, submitted: 0, average: null },
+    groups: [],
+    unknown: [],
+    duplicates: 0
+  };
+
+  var sh = findSubjectSheet_(ss, subj);
+  if (!sh) {
+    base.warning = '응답 시트를 찾지 못했습니다. 과목 시트의 "응답시트" 칸에 시트 이름을 적어 주십시오.';
+    base.groups = emptyGroups_(roster);
+    base.totals.expected = countRoster_(roster);
+    return base;
+  }
+  base.sheetName = sh.getName();
 
   var values = sh.getLastRow() > 0 ? sh.getDataRange().getValues() : [];
   var header = values.length ? values[0].map(function (h) { return String(h); }) : [];
   var rows = values.length > 1 ? values.slice(1) : [];
 
-  var noIdx = header.length ? findNoColumn_(header, cfg['번호열']) : 1;
-  var score = header.length ? findScoreColumns_(header, rows, noIdx, cfg['점수열'])
-                            : { mode: 'cols', idxs: [] };
+  if (!header.length) {
+    base.warning = '응답 시트가 비어 있습니다.';
+    base.groups = emptyGroups_(roster);
+    base.totals.expected = countRoster_(roster);
+    return base;
+  }
+
+  var noIdx = findNoColumn_(header, cfg['번호열']);
+  var score = findScoreColumns_(header, rows, noIdx, cfg['점수열']);
   var tsIdx = -1;
   for (var h = 0; h < header.length; h++) { if (isTimestampHeader_(header[h])) { tsIdx = h; break; } }
 
   var avgMode = String(cfg['점수계산'] || '합계').trim() === '평균';
-  var maxScore = toNumber_(cfg['만점']);
+  var maxScore = subj.maxScore;
 
-  // 번호 기준으로 마지막 제출만 인정
-  var latest = {};      // '3-7' -> {g,n,score,at}
-  var unknown = [];
-  var duplicates = 0;
+  var latest = {}, unknown = [], duplicates = 0;
 
   rows.forEach(function (row) {
     if (row.every(function (c) { return c === '' || c === null; })) return;
@@ -467,16 +602,18 @@ function dashboard_(cfg) {
     score.idxs.forEach(function (i) {
       var v = toNumber_(row[i]);
       if (v !== null) vals.push(v);
-      if (score.mode === 'quiz' && maxScore === null) {
+      if (score.mode === 'quiz' && (maxScore === null || maxScore === undefined)) {
         var mx = quizMax_(row[i]);
         if (mx !== null) maxScore = mx;
       }
     });
     var s = null;
     if (vals.length) {
-      var sum = vals.reduce(function (a, b) { return a + b; }, 0);
-      s = (score.mode === 'quiz' || !avgMode) ? sum : sum / vals.length;
       if (score.mode === 'quiz') s = vals[0];
+      else {
+        var sum = vals.reduce(function (a, b) { return a + b; }, 0);
+        s = avgMode ? sum / vals.length : sum;
+      }
     }
 
     var at = tsIdx >= 0 && row[tsIdx] ? new Date(row[tsIdx]) : null;
@@ -490,12 +627,11 @@ function dashboard_(cfg) {
     latest[key] = { g: p.g, n: p.n, no: key, score: s, at: at ? at.toISOString() : null };
   });
 
-  // 조별 집계 (응답에만 있는 조도 포함)
   var groupKeys = {};
   Object.keys(roster).forEach(function (g) { groupKeys[g] = true; });
   Object.keys(latest).forEach(function (k) { groupKeys[latest[k].g] = true; });
 
-  var groups = Object.keys(groupKeys).sort(function (a, b) { return Number(a) - Number(b); })
+  base.groups = Object.keys(groupKeys).sort(function (a, b) { return Number(a) - Number(b); })
     .map(function (g) {
       var slots = roster[g] ? roster[g].slice() : [];
       var members = Object.keys(latest)
@@ -504,43 +640,100 @@ function dashboard_(cfg) {
         .sort(function (a, b) { return a.n - b.n; });
       var scored = members.filter(function (m) { return m.score !== null; });
       var avg = scored.length
-        ? scored.reduce(function (a, m) { return a + m.score; }, 0) / scored.length
-        : null;
+        ? scored.reduce(function (a, m) { return a + m.score; }, 0) / scored.length : null;
       return {
-        group: g,
-        slots: slots,
-        expected: slots.length,
-        submitted: members.length,
-        average: avg === null ? null : Math.round(avg * 100) / 100,
-        members: members.map(function (m) {
-          return { no: m.no, n: m.n, score: m.score, at: m.at };
-        })
+        group: g, slots: slots, expected: slots.length, submitted: members.length,
+        average: round_(avg, 2),
+        members: members.map(function (m) { return { no: m.no, n: m.n, score: m.score, at: m.at }; })
       };
     });
 
   var allScored = Object.keys(latest).map(function (k) { return latest[k]; })
     .filter(function (m) { return m.score !== null; });
-  var totalExpected = groups.reduce(function (a, g) { return a + g.expected; }, 0);
-  var totalSubmitted = Object.keys(latest).length;
-  var totalAvg = allScored.length
-    ? allScored.reduce(function (a, m) { return a + m.score; }, 0) / allScored.length
-    : null;
+  base.totals = {
+    expected: base.groups.reduce(function (a, g) { return a + g.expected; }, 0),
+    submitted: Object.keys(latest).length,
+    average: allScored.length
+      ? round_(allScored.reduce(function (a, m) { return a + m.score; }, 0) / allScored.length, 2)
+      : null
+  };
+  base.maxScore = (maxScore === null || maxScore === undefined) ? null : maxScore;
+  base.unknown = unknown;
+  base.duplicates = duplicates;
+  if (!base.maxScore) {
+    base.warning = (base.warning ? base.warning + ' / ' : '') +
+      '만점을 알 수 없어 종합 순위에서 제외됩니다. 과목 시트의 "만점" 칸을 채워 주십시오.';
+  }
+  return base;
+}
+
+function emptyGroups_(roster) {
+  return Object.keys(roster).sort(function (a, b) { return Number(a) - Number(b); })
+    .map(function (g) {
+      return {
+        group: g, slots: roster[g].slice(), expected: roster[g].length,
+        submitted: 0, average: null, members: []
+      };
+    });
+}
+
+function countRoster_(roster) {
+  var n = 0;
+  Object.keys(roster).forEach(function (g) { n += roster[g].length; });
+  return n;
+}
+
+/* ===================================================================
+ *  종합 (과목별 득점률 평균)
+ * =================================================================== */
+
+function combine_(perSubject, roster) {
+  var names = {};
+  Object.keys(roster).forEach(function (g) { names[g] = true; });
+  perSubject.forEach(function (s) {
+    (s.groups || []).forEach(function (g) { names[g.group] = true; });
+  });
+
+  var missingMax = perSubject.filter(function (s) { return !s.maxScore; })
+    .map(function (s) { return s.name; });
+
+  var groups = Object.keys(names).sort(function (a, b) { return Number(a) - Number(b); })
+    .map(function (g) {
+      var expected = roster[g] ? roster[g].length : 0;
+      var detail = perSubject.map(function (s) {
+        var grp = null;
+        (s.groups || []).forEach(function (x) { if (x.group === g) grp = x; });
+        var avg = grp ? grp.average : null;
+        var rate = (avg !== null && s.maxScore) ? round_((avg / s.maxScore) * 100, 1) : null;
+        return {
+          name: s.name, average: avg, rate: rate,
+          submitted: grp ? grp.submitted : 0,
+          expected: grp ? grp.expected : expected
+        };
+      });
+      var rates = detail.map(function (d) { return d.rate; })
+        .filter(function (r) { return r !== null; });
+      var overall = rates.length
+        ? round_(rates.reduce(function (a, b) { return a + b; }, 0) / rates.length, 1) : null;
+      var complete = expected > 0 && detail.every(function (d) { return d.submitted >= expected; });
+      return { group: g, expected: expected, subjects: detail, overall: overall, complete: complete };
+    });
+
+  return { groups: groups, missingMax: missingMax };
+}
+
+function dashboard_(cfg) {
+  var ss = SpreadsheetApp.getActive();
+  var roster = buildRoster_(ss, cfg);
+  var subs = subjects_(cfg);
+  var perSubject = subs.map(function (s) { return aggregateSubject_(ss, cfg, s, roster); });
 
   return {
     updatedAt: new Date().toISOString(),
-    state: { evalOpen: truthy_(cfg['평가개방']), surveyOpen: truthy_(cfg['설문개방']) },
-    maxScore: maxScore,
-    scoreMode: score.mode === 'quiz' ? '퀴즈점수' : (avgMode ? '평균' : '합계'),
-    scoreColumns: score.idxs.map(function (i) { return header[i] || ('열' + (i + 1)); }),
-    sheetName: sh.getName(),
-    totals: {
-      expected: totalExpected,
-      submitted: totalSubmitted,
-      average: totalAvg === null ? null : Math.round(totalAvg * 100) / 100
-    },
-    groups: groups,
-    unknown: unknown,
-    duplicates: duplicates
+    survey: { open: truthy_(cfg['설문개방']) },
+    subjects: perSubject,
+    combined: combine_(perSubject, roster),
+    rosterTotal: countRoster_(roster)
   };
 }
 
