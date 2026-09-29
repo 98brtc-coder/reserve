@@ -7,6 +7,8 @@
   var timer = null, auto = true, last = null, activeTab = 0;
   var activeView = 'eval', surveyData = null;
   var dateParam = '', pastMode = false, knownDates = [];
+  var chartMode = 'pie';
+  try { chartMode = localStorage.getItem('rf_chart') || 'pie'; } catch (e) {}
 
   document.title = (CFG.unitName ? CFG.unitName + ' ' : '') + '관리자';
 
@@ -21,16 +23,19 @@
   function pct(n) { return n === null || n === undefined ? '-' : UNIT.fmt(n, 1) + '%'; }
 
   /* ── 로그인 ───────────────────────────────────────── */
+  /* PIN 확인용 요청(ping)을 따로 보내지 않는다.
+     현황 조회 한 번으로 인증까지 끝내 왕복을 절반으로 줄인다. */
   async function login(value) {
     setMsg(el('loginMsg'), '확인 중…');
     el('loginBtn').disabled = true;
     try {
-      await UNIT.api('ping', { pin: value });
+      var d = await UNIT.api('dashboard', { pin: value, date: '' });
       pin = value;
       sessionStorage.setItem(PIN_KEY, pin);
       el('loginView').hidden = true;
       el('dashView').hidden = false;
-      load();
+      last = d;
+      render(d);
       setAuto(true);
     } catch (err) {
       setMsg(el('loginMsg'), err.message, 'err');
@@ -61,15 +66,40 @@
   el('autoBtn').addEventListener('click', function () { setAuto(!auto); });
   el('refreshBtn').addEventListener('click', function () { load(); });
 
+  function settle(p) {
+    return p.then(function (d) { return { ok: true, d: d }; },
+                  function (e) { return { ok: false, e: e }; });
+  }
+
+  /* 평가 현황과 설문 결과를 동시에 요청한다(순차 호출이면 왕복 시간이 두 배). */
   async function load() {
-    try {
-      last = await UNIT.api('dashboard', { pin: pin, date: dateParam });
-      render(last);
-      setMsg(el('dashMsg'), '');
-    } catch (err) {
-      setMsg(el('dashMsg'), '불러오기 실패: ' + err.message, 'err');
+    busy(true);
+    var pDash = settle(UNIT.api('dashboard', { pin: pin, date: dateParam }));
+    var pSurv = (activeView === 'survey')
+      ? settle(UNIT.api('survey', { pin: pin, date: dateParam })) : null;
+
+    var rd = await pDash;
+    if (rd.ok) { last = rd.d; render(last); setMsg(el('dashMsg'), ''); }
+    else setMsg(el('dashMsg'), '불러오기 실패: ' + rd.e.message, 'err');
+
+    if (pSurv) {
+      var rs = await pSurv;
+      if (rs.ok) {
+        surveyData = rs.d;
+        mergeDates(surveyData.availableDates);
+        renderSurvey(surveyData);
+        setMsg(el('surveyMsg'), '');
+      } else {
+        setMsg(el('surveyMsg'), '설문 결과를 불러오지 못했습니다: ' + rs.e.message, 'err');
+      }
     }
-    if (activeView === 'survey') await loadSurvey();
+    busy(false);
+  }
+
+  function busy(on) {
+    var b = el('refreshBtn');
+    b.disabled = on;
+    b.textContent = on ? '불러오는 중…' : '새로고침';
   }
 
   /* ── 조회 기준일 ─────────────────────────────────
@@ -152,8 +182,27 @@
     el('viewEval').classList.toggle('active', v === 'eval');
     el('viewSurvey').classList.toggle('active', v === 'survey');
     el('csvBtn').hidden = (v !== 'eval');
-    if (v === 'survey' && !surveyData) loadSurvey();
+    if (v === 'survey' && !surveyData) {
+      el('surveyQuestions').innerHTML =
+        '<div class="panel"><p class="empty">설문 결과를 불러오는 중…</p></div>';
+      loadSurvey();
+    }
   }
+  function paintChartToggle() {
+    Array.prototype.forEach.call(el('chartToggle').children, function (b) {
+      b.classList.toggle('active', b.getAttribute('data-mode') === chartMode);
+    });
+  }
+  Array.prototype.forEach.call(el('chartToggle').children, function (b) {
+    b.addEventListener('click', function () {
+      chartMode = b.getAttribute('data-mode');
+      try { localStorage.setItem('rf_chart', chartMode); } catch (e) {}
+      paintChartToggle();
+      if (surveyData) renderSurvey(surveyData);
+    });
+  });
+  paintChartToggle();
+
   el('viewEval').addEventListener('click', function () { setView('eval'); });
   el('viewSurvey').addEventListener('click', function () { setView('survey'); });
 
@@ -184,6 +233,76 @@
       return;
     }
     (d.questions || []).forEach(function (q) { wrap.appendChild(questionCard(q)); });
+  }
+
+  /* 도넛은 '부분-전체'일 때만 쓴다.
+     - 단일선택 객관식만 (복수선택은 합이 100%가 아니고, 척도형은 순서가 있다)
+     - 항목 6개 이하, 실제 응답이 있는 항목 3개 이상
+       (2조각 도넛·7색 이상은 읽기 어려워 막대가 낫다)
+     색은 폼에 정의된 항목 순서로 고정 배정해 항목↔색이 바뀌지 않게 한다. */
+  function pieOK(q) {
+    if (chartMode !== 'pie') return false;
+    if (q.type !== 'MULTIPLE_CHOICE' && q.type !== 'LIST') return false;
+    if (!q.options || !q.answered) return false;
+    if (q.options.length > 6) return false;
+    var nz = 0;
+    q.options.forEach(function (o) { if (o.count > 0) nz++; });
+    return nz >= 3;
+  }
+
+  function arcPath(cx, cy, R, r, a0, a1) {
+    var f = function (n) { return Math.round(n * 100) / 100; };
+    var big = (a1 - a0) > Math.PI ? 1 : 0;
+    var x0 = cx + R * Math.cos(a0), y0 = cy + R * Math.sin(a0);
+    var x1 = cx + R * Math.cos(a1), y1 = cy + R * Math.sin(a1);
+    var i1 = cx + r * Math.cos(a1), j1 = cy + r * Math.sin(a1);
+    var i0 = cx + r * Math.cos(a0), j0 = cy + r * Math.sin(a0);
+    return 'M' + f(x0) + ' ' + f(y0) +
+           ' A' + R + ' ' + R + ' 0 ' + big + ' 1 ' + f(x1) + ' ' + f(y1) +
+           ' L' + f(i1) + ' ' + f(j1) +
+           ' A' + r + ' ' + r + ' 0 ' + big + ' 0 ' + f(i0) + ' ' + f(j0) + ' Z';
+  }
+
+  function donut(q) {
+    var cx = 90, cy = 90, R = 78, r = 48, total = q.answered;
+    var slices = '', acc = 0, drawn = 0;
+
+    q.options.forEach(function (o, i) {
+      if (!o.count) return;
+      drawn++;
+      var c = 'var(--c' + (i + 1) + ')';
+      var tip = esc(o.label) + ' — ' + o.count + '명 (' + UNIT.fmt(o.pct, 1) + '%)';
+      if (o.count === total) {                       // 한 항목이 100%
+        slices += '<circle cx="' + cx + '" cy="' + cy + '" r="' + ((R + r) / 2) +
+                  '" fill="none" stroke="' + c + '" stroke-width="' + (R - r) +
+                  '"><title>' + tip + '</title></circle>';
+        return;
+      }
+      var a0 = (acc / total) * 2 * Math.PI - Math.PI / 2;
+      acc += o.count;
+      var a1 = (acc / total) * 2 * Math.PI - Math.PI / 2;
+      slices += '<path d="' + arcPath(cx, cy, R, r, a0, a1) + '" fill="' + c +
+                '" stroke="var(--surface)" stroke-width="2"><title>' + tip + '</title></path>';
+    });
+
+    var legend = q.options.map(function (o, i) {
+      return '<li class="' + (o.count ? '' : 'zero') + '">' +
+        '<span class="sw" style="background:var(--c' + (i + 1) + ')"></span>' +
+        '<span class="lb">' + esc(o.label) +
+          (o.other ? '<span class="other-tag">기타 입력</span>' : '') + '</span>' +
+        '<span class="ln">' + o.count + '명</span>' +
+        '<span class="lp">' + UNIT.fmt(o.pct, 1) + '%</span></li>';
+    }).join('');
+
+    return '<div class="pie-wrap">' +
+      '<svg class="pie-svg" width="180" height="180" viewBox="0 0 180 180" role="img" ' +
+        'aria-label="' + esc(q.title) + ' 응답 분포">' + slices +
+        '<text x="90" y="86" text-anchor="middle" class="pie-center-v" fill="currentColor">' +
+          total + '</text>' +
+        '<text x="90" y="103" text-anchor="middle" class="pie-center-k" fill="currentColor" ' +
+          'opacity=".6">명 응답</text>' +
+      '</svg>' +
+      '<ul class="legend">' + legend + '</ul></div>';
   }
 
   function bars(options) {
@@ -227,7 +346,7 @@
         : '<p class="qnote">아직 작성된 답변이 없습니다.</p>';
     } else if (q.options) {
       if (q.multi) html += '<p class="qnote">복수 선택 문항 — 비율 합계가 100%를 넘을 수 있습니다.</p>';
-      html += bars(q.options);
+      html += pieOK(q) ? donut(q) : bars(q.options);
     } else {
       html += '<p class="qnote">집계할 수 없는 형식의 문항입니다.</p>';
     }

@@ -13,17 +13,22 @@
 
   /* POST(text/plain)로 먼저 시도하고, 막히면 GET으로 재시도한다.
      text/plain 으로 보내야 Apps Script 에서 CORS 사전요청(preflight)이 생기지 않는다. */
+  var postBlocked = false;   // POST 가 한 번 막히면 이후로는 바로 GET 을 쓴다
+
   async function api(action, params) {
     if (!hasApi()) throw new Error('config.js 의 apiUrl 이 아직 설정되지 않았습니다.');
     var payload = Object.assign({ action: action }, params || {});
-    try {
-      var res = await fetch(CFG.apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) return unwrap(await res.json());
-    } catch (e) { /* GET 으로 재시도 */ }
+    if (!postBlocked) {
+      try {
+        var res = await fetch(CFG.apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) return unwrap(await res.json());
+        postBlocked = true;
+      } catch (e) { postBlocked = true; }   // 왕복 두 번을 반복하지 않는다
+    }
 
     var u = new URL(CFG.apiUrl);
     Object.keys(payload).forEach(function (k) { u.searchParams.set(k, payload[k]); });
