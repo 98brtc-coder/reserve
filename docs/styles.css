@@ -211,3 +211,73 @@ tr.best td { background: rgba(200, 162, 74, .12); }
 td .sub-rate { font-variant-numeric: tabular-nums; }
 td .sub-sub { display: block; font-size: 11px; color: var(--muted); }
 .switch.survey { border-color: rgba(74, 93, 58, .5); }
+
+/* ── 상위 뷰 전환 (평가 현황 / 설문 결과) ───────────── */
+:root { --series: #256abf; --active: var(--navy); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --series: #3987e5; --active: #33507d; }
+}
+:root[data-theme="dark"] { --series: #3987e5; --active: #33507d; }
+
+.viewtabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.vtab {
+  font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+  padding: 11px 18px; border-radius: 12px;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+}
+.vtab.active { background: var(--active); border-color: var(--active); color: #fff; }
+.tab.active { background: var(--active); border-color: var(--active); }
+
+/* ── 설문 결과 ──────────────────────────────────── */
+.survey-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.survey-head .hero { text-align: right; }
+.hero-v { font-size: 34px; font-weight: 800; letter-spacing: -1px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.hero-k { font-size: 12px; color: var(--muted); }
+
+.qcard {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 16px; margin-bottom: 12px;
+}
+.qhead { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.qtitle { font-size: 15px; font-weight: 700; }
+.qmeta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.qnote { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.qbars { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.qbar-top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; margin-bottom: 5px; }
+.qbar-label { color: var(--text); }
+.qbar-val { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.qbar-track { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.qbar-track > i {
+  display: block; height: 100%; min-width: 0;
+  background: var(--series); border-radius: 0 4px 4px 0;
+  transition: width .35s ease;
+}
+.qbar:hover .qbar-track > i { filter: brightness(1.1); }
+.qbar.zero .qbar-label, .qbar.zero .qbar-val { color: var(--muted); }
+.qbar .other-tag { font-size: 11px; color: var(--muted); margin-left: 4px; }
+
+.qscale { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; }
+.qscale .avg { font-size: 30px; font-weight: 800; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.qscale .of { font-size: 13px; color: var(--muted); }
+.qends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 8px; }
+
+.qrow-label { font-size: 13px; font-weight: 700; margin: 14px 0 2px; }
+.answers { margin: 12px 0 0; padding: 0; list-style: none; max-height: 300px; overflow-y: auto;
+           border: 1px solid var(--line); border-radius: 10px; }
+.answers li { padding: 9px 12px; font-size: 14px; border-bottom: 1px solid var(--line); white-space: pre-wrap; }
+.answers li:last-child { border-bottom: none; }
+
+/* ── 조회 기준일 ────────────────────────────────── */
+.datebar .dkey { font-size: 12px; color: var(--muted); }
+.datebar .dval { font-size: 19px; font-weight: 800; letter-spacing: -.3px; margin-top: 2px; }
+.datebar.past { border-color: var(--gold); background: rgba(200, 162, 74, .08); }
+.datebar.past .dval::after { content: " · 과거 조회"; font-size: 12px; color: var(--gold); font-weight: 700; }
+.quickdates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.qdate {
+  font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; color: var(--text);
+}
+.qdate.active { background: var(--active); border-color: var(--active); color: #fff; }
+input[type=date] { width: auto; min-width: 150px; }

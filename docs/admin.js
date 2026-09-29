@@ -5,6 +5,8 @@
   var PIN_KEY = 'rf_admin_pin';
   var pin = sessionStorage.getItem(PIN_KEY) || '';
   var timer = null, auto = true, last = null, activeTab = 0;
+  var activeView = 'eval', surveyData = null;
+  var dateParam = '', pastMode = false, knownDates = [];
 
   document.title = (CFG.unitName ? CFG.unitName + ' ' : '') + '관리자';
 
@@ -61,17 +63,182 @@
 
   async function load() {
     try {
-      last = await UNIT.api('dashboard', { pin: pin });
+      last = await UNIT.api('dashboard', { pin: pin, date: dateParam });
       render(last);
       setMsg(el('dashMsg'), '');
     } catch (err) {
       setMsg(el('dashMsg'), '불러오기 실패: ' + err.message, 'err');
     }
+    if (activeView === 'survey') await loadSurvey();
+  }
+
+  /* ── 조회 기준일 ─────────────────────────────────
+     기본은 '당일'. 과거 조회로 들어가면 개폐 조작을 숨기고
+     자동 새로고침을 끈다(지난 데이터는 더 변하지 않는다). */
+  function dateText(s) {
+    if (!s) return '전체 기간';
+    var p = s.split('-');
+    var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    var w = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
+    return Number(p[0]) + '. ' + Number(p[1]) + '. ' + Number(p[2]) + '. (' + w + ')';
+  }
+
+  function mergeDates(list) {
+    (list || []).forEach(function (d) { if (knownDates.indexOf(d) === -1) knownDates.push(d); });
+    knownDates.sort().reverse();
+  }
+
+  function applyDateUI(d) {
+    mergeDates(d.availableDates);
+    var label;
+    if (dateParam === 'all') label = '전체 기간';
+    else if (!dateParam || d.date === d.today) label = '오늘 · ' + dateText(d.today);
+    else label = dateText(d.date);
+    el('dateLabel').textContent = label;
+
+    if (d.today) el('dateInput').max = d.today;
+    if (dateParam && dateParam !== 'all') el('dateInput').value = dateParam;
+
+    var wrap = el('quickDates');
+    wrap.innerHTML = '';
+    knownDates.slice(0, 14).forEach(function (day) {
+      var b = document.createElement('button');
+      b.className = 'qdate' + (day === dateParam ? ' active' : '');
+      b.textContent = dateText(day) + (day === d.today ? ' · 오늘' : '');
+      b.addEventListener('click', function () { goDate(day); });
+      wrap.appendChild(b);
+    });
+    if (!knownDates.length) wrap.innerHTML = '<span class="msg" style="color:var(--muted)">응답 기록이 없습니다.</span>';
+  }
+
+  function setPast(on) {
+    pastMode = on;
+    el('datePicker').hidden = !on;
+    el('pastBtn').hidden = on;
+    el('todayBtn').hidden = !on;
+    el('togglePanel').hidden = on;      // 과거 조회 중에는 개폐 조작을 감춘다
+    el('dateBar').classList.toggle('past', on);
+    setAuto(!on);
+  }
+
+  function goDate(v) {
+    dateParam = v;
+    surveyData = null;
+    setPast(v !== '');
+    load();
+  }
+
+  el('pastBtn').addEventListener('click', function () {
+    setPast(true);
+    if (!el('dateInput').value && knownDates.length) el('dateInput').value = knownDates[0];
+  });
+  el('todayBtn').addEventListener('click', function () {
+    dateParam = ''; surveyData = null;
+    setPast(false);
+    load();
+  });
+  el('dateGo').addEventListener('click', function () {
+    var v = el('dateInput').value;
+    if (!v) return setMsg(el('dashMsg'), '날짜를 선택하십시오.', 'err');
+    goDate(v);
+  });
+  el('dateAll').addEventListener('click', function () { goDate('all'); });
+
+  /* ── 뷰 전환 (평가 현황 / 설문 결과) ──────────────── */
+  function setView(v) {
+    activeView = v;
+    el('evalView').hidden = (v !== 'eval');
+    el('surveyView').hidden = (v !== 'survey');
+    el('viewEval').classList.toggle('active', v === 'eval');
+    el('viewSurvey').classList.toggle('active', v === 'survey');
+    el('csvBtn').hidden = (v !== 'eval');
+    if (v === 'survey' && !surveyData) loadSurvey();
+  }
+  el('viewEval').addEventListener('click', function () { setView('eval'); });
+  el('viewSurvey').addEventListener('click', function () { setView('survey'); });
+
+  async function loadSurvey() {
+    try {
+      setMsg(el('surveyMsg'), '');
+      surveyData = await UNIT.api('survey', { pin: pin, date: dateParam });
+      mergeDates(surveyData.availableDates);
+      renderSurvey(surveyData);
+    } catch (err) {
+      setMsg(el('surveyMsg'), '설문 결과를 불러오지 못했습니다: ' + err.message, 'err');
+    }
+  }
+
+  /* ── 설문 결과 렌더링 ────────────────────────────
+     단일 계열 분포이므로 색은 한 가지만 쓰고(범례 불필요),
+     각 막대에 항목명·인원·비율을 직접 라벨로 붙인다. */
+  function renderSurvey(d) {
+    el('surveyTitle').textContent = d.formTitle || '설문 결과';
+    el('surveyState').textContent =
+      (d.accepting ? '응답 받는 중' : '마감됨') + ' · 갱신 ' + UNIT.timeText(d.updatedAt);
+    el('surveyCount').textContent = d.responseCount;
+
+    var wrap = el('surveyQuestions');
+    wrap.innerHTML = '';
+    if (!d.responseCount) {
+      wrap.innerHTML = '<div class="panel"><p class="empty">아직 제출된 설문이 없습니다.</p></div>';
+      return;
+    }
+    (d.questions || []).forEach(function (q) { wrap.appendChild(questionCard(q)); });
+  }
+
+  function bars(options) {
+    return '<div class="qbars">' + options.map(function (o) {
+      var w = Math.max(0, Math.min(100, o.pct || 0));
+      return '<div class="qbar' + (o.count ? '' : ' zero') + '" title="' +
+             esc(o.label) + ' — ' + o.count + '명 (' + UNIT.fmt(o.pct, 1) + '%)">' +
+        '<div class="qbar-top">' +
+          '<span class="qbar-label">' + esc(o.label) +
+            (o.other ? '<span class="other-tag">기타 입력</span>' : '') + '</span>' +
+          '<span class="qbar-val">' + o.count + '명 · ' + UNIT.fmt(o.pct, 1) + '%</span>' +
+        '</div>' +
+        '<div class="qbar-track"><i style="width:' + w + '%"></i></div></div>';
+    }).join('') + '</div>';
+  }
+
+  function questionCard(q) {
+    var div = document.createElement('div');
+    div.className = 'qcard';
+    var isText = (q.type === 'TEXT' || q.type === 'PARAGRAPH_TEXT');
+    var html = '<div class="qhead"><span class="qtitle">' + esc(q.title) + '</span>' +
+               '<span class="qmeta">응답 ' + (q.answered || 0) + '명</span></div>';
+
+    if (q.type === 'SCALE') {
+      html += '<div class="qscale"><span class="avg">' +
+              (q.average === undefined || q.average === null ? '-' : UNIT.fmt(q.average, 2)) +
+              '</span><span class="of">/ ' + q.max + '점 평균</span></div>';
+      if (q.options) html += bars(q.options);
+      if (q.minLabel || q.maxLabel) {
+        html += '<div class="qends"><span>' + esc(q.minLabel) + '</span>' +
+                '<span>' + esc(q.maxLabel) + '</span></div>';
+      }
+    } else if (q.rows) {
+      q.rows.forEach(function (r) {
+        html += '<div class="qrow-label">' + esc(r.label) +
+                ' <span class="qmeta">(' + r.answered + '명)</span></div>' + bars(r.options);
+      });
+    } else if (isText) {
+      html += q.answers
+        ? '<ul class="answers">' + q.answers.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'
+        : '<p class="qnote">아직 작성된 답변이 없습니다.</p>';
+    } else if (q.options) {
+      if (q.multi) html += '<p class="qnote">복수 선택 문항 — 비율 합계가 100%를 넘을 수 있습니다.</p>';
+      html += bars(q.options);
+    } else {
+      html += '<p class="qnote">집계할 수 없는 형식의 문항입니다.</p>';
+    }
+    div.innerHTML = html;
+    return div;
   }
 
   /* ── 렌더링 ──────────────────────────────────────── */
   function render(d) {
     el('updatedAt').textContent = UNIT.timeText(d.updatedAt);
+    applyDateUI(d);
     el('dashTitle').textContent = (CFG.unitName || '') + ' 평가 현황';
     renderSwitches(d);
     renderCombined(d);
@@ -292,7 +459,9 @@
     var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = '평가현황_' + new Date().toISOString().slice(0, 16).replace(/[:T-]/g, '') + '.csv';
+    var tag = dateParam === 'all' ? '전체기간'
+            : (dateParam || (last.today || '')).replace(/-/g, '');
+    a.download = '평가현황_' + tag + '.csv';
     a.click();
     URL.revokeObjectURL(a.href);
   });
