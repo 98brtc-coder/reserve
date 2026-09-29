@@ -16,6 +16,15 @@ var ROSTER_SHEET = '명단';
 var STATE_CACHE_KEY = 'public_state_v2';
 var STATE_CACHE_SEC = 5;
 
+/** 첫 화면 안내 상자의 기본 문구. *별표*로 감싼 부분은 굵게 표시된다. */
+var GUIDE_DEFAULT = [
+  '번호는 *조-번* 형식으로 입력합니다. (예: 3조 7번 → *3-7*)',
+  '평가는 *과목마다* 번호를 입력해야 합니다.',
+  '1인 1회이며, 여러 번 제출한 경우 *마지막 제출*만 인정됩니다.',
+  '번호를 잘못 입력하면 조 점수에 반영되지 않습니다.',
+  '이 화면으로 돌아오려면 카드를 휴대폰 뒷면에 다시 태그하십시오.'
+].join('\n');
+
 var DEFAULTS = [
   ['부대명', '서산 과학화 예비군훈련대', '첫 화면 상단에 표시됩니다.'],
   ['관리자PIN', '1234', '교관용 로그인 PIN. 반드시 변경하십시오.'],
@@ -25,6 +34,9 @@ var DEFAULTS = [
   ['평가마감안내', '평가 시간이 아닙니다. 교관 안내에 따라 주십시오.', '평가 마감 시 문구.'],
   ['설문마감안내', '설문 시간이 아닙니다. 교관 안내에 따라 주십시오.', '설문 마감 시 문구.'],
   ['공지', '', '첫 화면 공지. 비워두면 표시되지 않습니다.'],
+  ['안내제목', '안내', '첫 화면 안내 상자의 제목. 비우면 제목이 숨겨집니다.'],
+  ['안내문구', GUIDE_DEFAULT,
+   '한 줄에 한 항목씩 적습니다(Alt+Enter 로 줄바꿈). *별표*로 감싸면 굵게. 비우면 안내 상자가 숨겨집니다.'],
   ['조개수', '10', '전체 조 수(m). 명단 시트가 있으면 명단이 우선합니다.'],
   ['조별인원', '10', '조당 인원(n).'],
   ['번호열', '', '번호(조-번) 열 제목. 비우면 자동 탐색.'],
@@ -255,6 +267,13 @@ function setSubjectCell_(subj, colName, value) {
   if (col > 0 && subj.row > 1) sh.getRange(subj.row, col).setValue(value);
 }
 
+function splitLines_(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .split(/\r?\n/)
+    .map(function (x) { return x.trim(); })
+    .filter(function (x) { return x.length > 0; });
+}
+
 function truthy_(v) {
   var s = String(v === undefined || v === null ? '' : v).trim().toLowerCase();
   return s === '1' || s === 'true' || s === '예' || s === 'y' || s === 'yes' || s === 'on' || s === '개방';
@@ -284,6 +303,8 @@ function publicState_(cfg) {
     unitName: String(cfg['부대명'] || ''),
     notice: String(cfg['공지'] || ''),
     evalClosedMessage: String(cfg['평가마감안내'] || ''),
+    guideTitle: String(cfg['안내제목'] === undefined ? '안내' : (cfg['안내제목'] || '')),
+    guide: splitLines_(cfg['안내문구'] === undefined ? GUIDE_DEFAULT : cfg['안내문구']),
     subjects: subjects_(cfg).map(function (s) {
       return { name: s.name, open: s.open, url: subjectViewUrl_(s) };
     }),
