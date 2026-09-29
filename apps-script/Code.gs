@@ -126,7 +126,7 @@ function menuToggle_(target, name, open) {
 }
 
 function menuSummary() {
-  var d = dashboard_(readConfig_());
+  var d = dashboard_(readConfig_(), todayKey_());
   var lines = [];
   d.combined.groups.slice()
     .sort(function (a, b) { return (b.overall === null ? -1 : b.overall) - (a.overall === null ? -1 : a.overall); })
@@ -165,7 +165,8 @@ function handle_(p) {
     requirePin_(cfg, p.pin);
 
     if (action === 'ping') return json_({ ok: true, data: { auth: true } });
-    if (action === 'dashboard') return json_({ ok: true, data: dashboard_(cfg) });
+    if (action === 'dashboard') return json_({ ok: true, data: dashboard_(cfg, resolveDay_(p.date)) });
+    if (action === 'survey') return json_({ ok: true, data: cachedSurvey_(cfg, resolveDay_(p.date)) });
     if (action === 'toggle') {
       var lock = LockService.getScriptLock();
       lock.waitLock(20000);
@@ -265,6 +266,23 @@ function setSubjectCell_(subj, colName, value) {
   if (!sh) return;
   var col = SUBJECT_HEADER.indexOf(colName) + 1;
   if (col > 0 && subj.row > 1) sh.getRange(subj.row, col).setValue(value);
+}
+
+/** 스크립트 표준시간대 기준 'yyyy-MM-dd' */
+function dayKey_(d) {
+  if (!d || Object.prototype.toString.call(d) !== '[object Date]' || isNaN(d.getTime())) return '';
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function todayKey_() { return dayKey_(new Date()); }
+
+/** 요청의 date 값을 조회 기준일로 바꾼다. 'all' 이면 전체 기간(빈 문자열). */
+function resolveDay_(v) {
+  var s = String(v === null || v === undefined ? '' : v).trim();
+  if (s === 'all') return '';
+  if (!s) return todayKey_();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error('날짜 형식이 올바르지 않습니다: ' + s);
+  return s;
 }
 
 function splitLines_(v) {
@@ -572,7 +590,7 @@ function findSubjectSheet_(ss, subj) {
  *  과목별 집계
  * =================================================================== */
 
-function aggregateSubject_(ss, cfg, subj, roster) {
+function aggregateSubject_(ss, cfg, subj, roster, day, dateSet) {
   var base = {
     name: subj.name,
     open: subj.open,
@@ -614,6 +632,14 @@ function aggregateSubject_(ss, cfg, subj, roster) {
   var avgMode = String(cfg['점수계산'] || '합계').trim() === '평균';
   var maxScore = subj.maxScore;
 
+  if (day && tsIdx < 0) {
+    base.warning = '타임스탬프 열이 없어 날짜별 조회를 할 수 없습니다. ' +
+                   '구글폼 응답 시트를 그대로 사용하고 있는지 확인하십시오.';
+    base.groups = emptyGroups_(roster);
+    base.totals.expected = countRoster_(roster);
+    return base;
+  }
+
   var latest = {}, unknown = [], duplicates = 0;
 
   rows.forEach(function (row) {
@@ -638,6 +664,10 @@ function aggregateSubject_(ss, cfg, subj, roster) {
     }
 
     var at = tsIdx >= 0 && row[tsIdx] ? new Date(row[tsIdx]) : null;
+    var key0 = dayKey_(at);
+    if (key0 && dateSet) dateSet[key0] = true;
+    if (day && key0 !== day) return;          // 조회 기준일이 아닌 응답은 제외
+
     var p = parseNo_(row[noIdx]);
     if (!p) {
       unknown.push({ raw: String(row[noIdx] || ''), score: s, at: at ? at.toISOString() : null });
@@ -743,14 +773,20 @@ function combine_(perSubject, roster) {
   return { groups: groups, missingMax: missingMax };
 }
 
-function dashboard_(cfg) {
+function dashboard_(cfg, day) {
   var ss = SpreadsheetApp.getActive();
   var roster = buildRoster_(ss, cfg);
   var subs = subjects_(cfg);
-  var perSubject = subs.map(function (s) { return aggregateSubject_(ss, cfg, s, roster); });
+  var dateSet = {};
+  var perSubject = subs.map(function (s) {
+    return aggregateSubject_(ss, cfg, s, roster, day, dateSet);
+  });
 
   return {
     updatedAt: new Date().toISOString(),
+    date: day || '',                 // '' 이면 전체 기간
+    today: todayKey_(),
+    availableDates: Object.keys(dateSet).sort().reverse(),
     survey: { open: truthy_(cfg['설문개방']) },
     subjects: perSubject,
     combined: combine_(perSubject, roster),
@@ -758,7 +794,164 @@ function dashboard_(cfg) {
   };
 }
 
+/* ===================================================================
+ *  설문 결과 집계 (무기명 — 개인 식별 정보는 수집·저장하지 않는다)
+ * =================================================================== */
+
+var SURVEY_CACHE_KEY = 'survey_results_v1';
+var SURVEY_CACHE_SEC = 20;
+var TEXT_ANSWER_LIMIT = 300;
+
+function cachedSurvey_(cfg, day) {
+  var cache = CacheService.getScriptCache();
+  var key = SURVEY_CACHE_KEY + '|' + (day || 'all');
+  var hit = cache.get(key);
+  if (hit) { try { return JSON.parse(hit); } catch (e) { /* 무시 */ } }
+  var r = surveyResults_(cfg, day);
+  try { cache.put(key, JSON.stringify(r), SURVEY_CACHE_SEC); } catch (e) { /* 용량 초과 시 생략 */ }
+  return r;
+}
+
+function surveyResults_(cfg, day) {
+  var edit = String(cfg['설문폼_편집링크'] || '').trim();
+  if (!edit) throw new Error('설정 시트의 "설문폼_편집링크" 가 비어 있습니다.');
+  var form = openForm_(edit, '설문폼');
+  var items = form.getItems();
+  var questions = [], byId = {};
+
+  items.forEach(function (item) {
+    var q = buildQuestion_(item);
+    if (!q) return;
+    byId[item.getId()] = q;
+    questions.push(q);
+  });
+
+  var all = form.getResponses();
+  var dateSet = {};
+  var responses = all.filter(function (fr) {
+    var k = dayKey_(fr.getTimestamp());
+    if (k) dateSet[k] = true;
+    return !day || k === day;
+  });
+
+  responses.forEach(function (fr) {
+    fr.getItemResponses().forEach(function (ir) {
+      var q = byId[ir.getItem().getId()];
+      if (!q) return;
+      tally_(q, ir.getResponse());
+    });
+  });
+
+  questions.forEach(finishQuestion_);
+
+  return {
+    updatedAt: new Date().toISOString(),
+    date: day || '',
+    today: todayKey_(),
+    availableDates: Object.keys(dateSet).sort().reverse(),
+    formTitle: form.getTitle(),
+    accepting: form.isAcceptingResponses(),
+    responseCount: responses.length,
+    totalAllTime: all.length,
+    questions: questions
+  };
+}
+
+function buildQuestion_(item) {
+  var type = String(item.getType());
+  var q = { title: item.getTitle(), type: type, answered: 0, options: [], rows: [], answers: [] };
+
+  if (type === 'MULTIPLE_CHOICE' || type === 'LIST' || type === 'CHECKBOX') {
+    var ci = type === 'MULTIPLE_CHOICE' ? item.asMultipleChoiceItem()
+           : type === 'LIST' ? item.asListItem() : item.asCheckboxItem();
+    ci.getChoices().forEach(function (c) { q.options.push({ label: c.getValue(), count: 0 }); });
+    q.multi = (type === 'CHECKBOX');
+    return q;
+  }
+  if (type === 'SCALE') {
+    var si = item.asScaleItem();
+    q.min = si.getLowerBound();
+    q.max = si.getUpperBound();
+    q.minLabel = si.getLeftLabel() || '';
+    q.maxLabel = si.getRightLabel() || '';
+    for (var v = q.min; v <= q.max; v++) q.options.push({ label: String(v), count: 0 });
+    q.sum = 0;
+    return q;
+  }
+  if (type === 'GRID' || type === 'CHECKBOX_GRID') {
+    var gi = (type === 'GRID') ? item.asGridItem() : item.asCheckboxGridItem();
+    var cols = gi.getColumns();
+    gi.getRows().forEach(function (r) {
+      q.rows.push({
+        label: r, answered: 0,
+        options: cols.map(function (c) { return { label: c, count: 0 }; })
+      });
+    });
+    return q;
+  }
+  if (type === 'TEXT' || type === 'PARAGRAPH_TEXT') return q;
+  return null;   // 제목/이미지/구분선 등은 집계 대상이 아니다
+}
+
+function bump_(options, label) {
+  var t = String(label === null || label === undefined ? '' : label).trim();
+  if (!t) return;
+  for (var i = 0; i < options.length; i++) {
+    if (options[i].label === t) { options[i].count++; return; }
+  }
+  options.push({ label: t, count: 1, other: true });   // '기타' 직접 입력
+}
+
+function tally_(q, v) {
+  if (v === null || v === undefined || v === '') return;
+
+  if (q.type === 'CHECKBOX') {
+    var arr = [].concat(v).filter(function (x) { return String(x).trim(); });
+    if (!arr.length) return;
+    q.answered++;
+    arr.forEach(function (x) { bump_(q.options, x); });
+    return;
+  }
+  if (q.type === 'MULTIPLE_CHOICE' || q.type === 'LIST') {
+    q.answered++; bump_(q.options, v); return;
+  }
+  if (q.type === 'SCALE') {
+    var n = parseFloat(v);
+    if (isNaN(n)) return;
+    q.answered++; q.sum += n; bump_(q.options, String(n));
+    return;
+  }
+  if (q.type === 'GRID' || q.type === 'CHECKBOX_GRID') {
+    var rows = [].concat(v);
+    for (var i = 0; i < q.rows.length && i < rows.length; i++) {
+      var cell = rows[i];
+      if (cell === null || cell === undefined || cell === '') continue;
+      q.rows[i].answered++;
+      [].concat(cell).forEach(function (x) { bump_(q.rows[i].options, x); });
+    }
+    q.answered++;
+    return;
+  }
+  // 주관식
+  q.answered++;
+  if (q.answers.length < TEXT_ANSWER_LIMIT) q.answers.push(String(v).slice(0, 500));
+}
+
+function finishQuestion_(q) {
+  if (q.type === 'SCALE' && q.answered > 0) q.average = round_(q.sum / q.answered, 2);
+  delete q.sum;
+  var base = q.answered || 0;
+  q.options.forEach(function (o) { o.pct = base ? round_((o.count / base) * 100, 1) : 0; });
+  q.rows.forEach(function (r) {
+    var b = r.answered || 0;
+    r.options.forEach(function (o) { o.pct = b ? round_((o.count / b) * 100, 1) : 0; });
+  });
+  if (!q.rows.length) delete q.rows;
+  if (!q.options.length) delete q.options;
+  if (!q.answers.length) delete q.answers;
+}
+
 /** 편집기에서 직접 실행해 동작을 확인할 때 사용 */
 function testDashboard() {
-  Logger.log(JSON.stringify(dashboard_(readConfig_()), null, 2));
+  Logger.log(JSON.stringify(dashboard_(readConfig_(), todayKey_()), null, 2));
 }
