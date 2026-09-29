@@ -10,7 +10,7 @@ window.UNIT_CONFIG = {
   unitName: "서산 과학화 예비군훈련대",
 
   // Apps Script 웹앱 주소 (https://script.google.com/macros/s/..../exec)
-  apiUrl: "https://script.google.com/macros/s/AKfycbw7Y6iaiUOHY12dvI9TIoJbAn-8cVv6XC0AlDSh-opUby7izVucsQMKuYF2K60ORmQ9Dw/exec",
+  apiUrl: "https://script.google.com/macros/s/AKfycbyV4B0UNY4aQ8s3VlGVBAP_rOTKN6KvNv-H4a_rhXWcLHbPQjefg7GdgM71IBoalcusWA/exec",
 
   // 구글폼 "응시용" 링크 (설정 시트에 편집링크를 넣으면 자동으로 덮어씁니다)
   evalFormUrl: "",
