@@ -267,22 +267,36 @@ function toggle_(cfg, target, open) {
 
   // 구글폼 자체의 응답 수락을 끄고 켠다 (링크를 직접 아는 경우도 차단됨)
   var editLink = String(cfg[prefix + '폼_편집링크'] || '').trim();
+  var form = null;
   if (editLink) {
-    var form = openForm_(editLink, prefix + '폼');
+    form = openForm_(editLink, prefix + '폼');
     form.setAcceptingResponses(open);
-    if (!open) {
-      var msg = String(cfg[prefix + '마감안내'] || '').trim();
-      if (msg) form.setCustomClosedMessage(msg);
-    }
   }
+
+  // 사이트 표시 상태는 폼 상태와 반드시 함께 바뀌어야 하므로 먼저 확정한다
   setConfig_(prefix + '개방', open ? '예' : '아니오');
   CacheService.getScriptCache().remove(STATE_CACHE_KEY);
+
+  // 마감 안내 문구는 부가 기능이다. 실패해도 개폐 자체를 막지 않는다.
+  var warning = '';
+  if (form && !open) {
+    var msg = String(cfg[prefix + '마감안내'] || '').trim();
+    if (msg) {
+      try {
+        form.setCustomClosedFormMessage(msg);
+      } catch (err) {
+        warning = '마감 안내 문구는 적용하지 못했습니다(개폐는 정상 처리됨): ' +
+                  ((err && err.message) ? err.message : err);
+      }
+    }
+  }
 
   var fresh = readConfig_();
   return {
     evalOpen: truthy_(fresh['평가개방']),
     surveyOpen: truthy_(fresh['설문개방']),
-    formLinked: !!editLink
+    formLinked: !!editLink,
+    warning: warning
   };
 }
 
