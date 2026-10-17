@@ -148,13 +148,11 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('예비군 평가')
     .addItem('설정 / 과목 시트 준비', 'setup')
     .addSeparator()
-    .addItem('평가 전체 열기', 'menuAllOpen')
-    .addItem('평가 전체 닫기', 'menuAllClose')
+    .addItem('평가 — 모든 조 열기', 'menuGroupsAll')
+    .addItem('평가 — 모든 조 닫기', 'menuGroupsNone')
+    .addSeparator()
     .addItem('설문 열기', 'menuSurveyOpen')
     .addItem('설문 닫기', 'menuSurveyClose')
-    .addSeparator()
-    .addItem('모든 조 열기', 'menuGroupsAll')
-    .addItem('모든 조 닫기', 'menuGroupsNone')
     .addSeparator()
     .addItem('문제 순서 섞기 켜기', 'menuShuffleOn')
     .addItem('링크 캐시 비우기', 'menuClearLinks')
@@ -162,8 +160,6 @@ function onOpen() {
     .addToUi();
 }
 
-function menuAllOpen() { menuToggle_('subjects', '', true); }
-function menuAllClose() { menuToggle_('subjects', '', false); }
 function menuSurveyOpen() { menuToggle_('survey', '', true); }
 function menuSurveyClose() { menuToggle_('survey', '', false); }
 
@@ -409,18 +405,42 @@ function subjectOpen_(cfg, subj, maxG) {
   return { list: list, text: formatOpenGroups_(set, maxG) };
 }
 
-/** 관리자 화면에서 넘어온 값을 과목별 개방조 칸에 적는다. */
+/**
+ * 관리자 화면에서 넘어온 값을 과목별 개방조 칸에 적고,
+ * 그 결과에 따라 구글폼의 응답 수락까지 자동으로 맞춘다.
+ *   열린 조가 하나라도 있으면 → 폼 열기
+ *   "없음" 이면                → 폼 닫기 (링크를 알아도 제출 불가)
+ * 덕분에 교관은 조만 조정하면 되고, 과목 개폐는 따라온다.
+ */
 function setOpenGroups_(cfg, subjectName, spec) {
   var maxG = parseInt(cfg['조개수'], 10) || 50;
-  var text = formatOpenGroups_(parseOpenGroups_(spec), maxG);
+  var set = parseOpenGroups_(spec);
+  var text = formatOpenGroups_(set, maxG);
+  var shouldOpen = (set === null) || Object.keys(set).length > 0;
+
   var want = String(subjectName || '').trim();
-  var all = subjects_(cfg);
-  var hits = all.filter(function (s) { return !want || want === '*' || s.name === want; });
+  var hits = subjects_(cfg).filter(function (s) {
+    return !want || want === '*' || s.name === want;
+  });
   if (!hits.length) throw new Error('과목을 찾을 수 없습니다: ' + subjectName);
-  hits.forEach(function (s) { setSubjectCell_(s, '개방조', text); });
+
+  var warnings = [];
+  hits.forEach(function (s) {
+    setSubjectCell_(s, '개방조', text);
+    if (s.open === shouldOpen) return;               // 상태가 같으면 폼은 건드리지 않는다
+    try {
+      toggleSubject_(cfg, s, shouldOpen, warnings);
+    } catch (err) {
+      warnings.push(s.name + ': ' + ((err && err.message) ? err.message : err));
+    }
+  });
+
   CacheService.getScriptCache().remove(STATE_CACHE_KEY);
-  return { subject: want || '*', openGroups: text,
-           applied: hits.map(function (s) { return s.name; }) };
+  return {
+    subject: want || '*', openGroups: text, formOpen: shouldOpen,
+    applied: hits.map(function (s) { return s.name; }),
+    warning: warnings.join(' / ')
+  };
 }
 
 /* ===================================================================
@@ -1332,7 +1352,29 @@ function claimsSheet_(create) {
     sh.setFrozenRows(1);
     sh.setColumnWidth(5, 160).setColumnWidth(6, 230);
   }
+  if (sh) {
+    // "1-10" 을 1월 10일로, "2026-10-17" 을 날짜로 바꿔 버리는 자동 변환을 막는다
+    try { sh.getRange(1, 1, sh.getMaxRows(), 2).setNumberFormat('@'); } catch (e) { /* 무시 */ }
+  }
   return sh;
+}
+
+/* 시트가 값을 날짜로 바꿔 저장해 버린 경우까지 견디도록 관대하게 읽는다. */
+function claimDayOf_(v) {
+  if (v === null || v === undefined || v === '') return '';
+  if (Object.prototype.toString.call(v) === '[object Date]') return dayKey_(v);
+  var t = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  var d = new Date(t);
+  return isNaN(d.getTime()) ? t : dayKey_(d);
+}
+
+/** 번호는 조·번 숫자 열에서 되살린다(번호 칸이 날짜로 변질돼도 안전). */
+function claimNoOf_(row) {
+  var g = parseInt(row[2], 10), n = parseInt(row[3], 10);
+  if (g > 0 && n > 0) return g + '-' + n;
+  var p = parseNo_(row[1]);
+  return p ? p.g + '-' + p.n : '';
 }
 
 /** 해당 날짜의 등록 현황을 번호별로 읽는다. */
@@ -1342,10 +1384,9 @@ function readClaims_(day) {
   if (!sh || sh.getLastRow() < 2) return map;
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, CLAIM_HEADER.length).getValues();
   v.forEach(function (r, i) {
-    var d = String(r[0] || '').trim();
-    var no = String(r[1] || '').trim();
+    var no = claimNoOf_(r);
     if (!no) return;
-    if (day && d !== day) return;
+    if (day && claimDayOf_(r[0]) !== day) return;
     if (map[no]) return;                        // 먼저 등록한 것이 주인
     var at = r[4] ? new Date(r[4]) : null;
     map[no] = {
@@ -1377,7 +1418,15 @@ function claimNumber_(cfg, g, n, token) {
     if (cur && cur.token && cur.token !== tk) {
       return { ok: false, taken: true, no: no, date: day, at: cur.at };
     }
-    if (!cur) claimsSheet_(true).appendRow([day, no, Number(p.g), p.n, new Date(), tk, '']);
+    if (!cur) {
+      var csh = claimsSheet_(true);
+      csh.appendRow([day, no, Number(p.g), p.n, new Date(), tk, '']);
+      // 혹시라도 날짜로 변질되지 않도록 방금 쓴 두 칸을 문자열로 다시 박아 둔다
+      try {
+        var rw = csh.getLastRow();
+        csh.getRange(rw, 1, 1, 2).setNumberFormat('@').setValues([[day, no]]);
+      } catch (e) { /* 무시 */ }
+    }
     return { ok: true, taken: false, no: no, date: day };
   } finally { if (locked) lock.releaseLock(); }
 }
@@ -1386,11 +1435,11 @@ function claimNumber_(cfg, g, n, token) {
 function releaseClaim_(no, day) {
   var sh = claimsSheet_(false);
   if (!sh || sh.getLastRow() < 2) return 0;
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, CLAIM_HEADER.length).getValues();
   var rows = [];
   v.forEach(function (r, i) {
-    if (String(r[1] || '').trim() !== no) return;
-    if (day && String(r[0] || '').trim() !== day) return;
+    if (claimNoOf_(r) !== no) return;
+    if (day && claimDayOf_(r[0]) !== day) return;
     rows.push(i + 2);
   });
   rows.sort(function (a, b) { return b - a; }).forEach(function (r) { sh.deleteRow(r); });
@@ -1440,7 +1489,9 @@ function resetNumber_(cfg, subjectName, no, day) {
 
   CacheService.getScriptCache().remove(STATE_CACHE_KEY);
   if (!removed.length && !released) {
-    throw new Error(no + ' 의 등록·제출 기록을 ' + day + ' 안에서 찾지 못했습니다.');
+    throw new Error(no + ' 의 서버 기록이 ' + day + ' 안에 없습니다. 지울 것이 없습니다.\n' +
+      '그 예비군의 폰에만 번호가 남아 있는 경우이니, 폰에서 번호 옆 자물쇠(🔒)를 누르고 ' +
+      '관리자 PIN 을 입력해 번호를 다시 고르게 하십시오.');
   }
   return { no: no, date: day, removed: removed, released: released };
 }
