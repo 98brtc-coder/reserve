@@ -6,8 +6,8 @@
 <title>관리자 · 평가 현황</title>
 <meta name="theme-color" content="#16243a">
 <meta name="robots" content="noindex, nofollow">
-<link rel="stylesheet" href="styles.css?v=7">
-<script src="config.js?v=7"></script>
+<link rel="stylesheet" href="styles.css?v=10">
+<script src="config.js?v=10"></script>
 </head>
 <body>
 <main class="wrap wide">
@@ -70,6 +70,39 @@
       <p id="toggleMsg" class="msg"></p>
     </div>
 
+    <div class="panel" id="groupPanel">
+      <div class="row" style="justify-content:space-between;margin-bottom:12px">
+        <h2 style="margin:0">조별 개방 <span class="hint">열린 조만 응시 화면이 열립니다</span></h2>
+        <div class="row">
+          <button id="gAll" class="on">전체 열기</button>
+          <button id="gNone" class="off">전체 닫기</button>
+          <button id="gA" class="ghost">A안 조만</button>
+          <button id="gB" class="ghost">B안 조만</button>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:6px">
+        <label for="gSpec" style="margin:0">열 조</label>
+        <input type="text" id="gSpec" placeholder="1,2,7  또는  1~7" style="max-width:220px">
+        <button id="gApply">적용</button>
+        <span class="meta" id="gNow">현재 -</span>
+      </div>
+      <div class="howto">
+        <b>입력 방법</b>
+        <table>
+          <tr><td><code>1,2,7</code></td><td>쉼표 — <b>1조·2조·7조만</b> 열립니다 (나머지는 닫힘)</td></tr>
+          <tr><td><code>1~7</code></td><td>물결 — <b>1조부터 7조까지</b> 연속으로 열립니다</td></tr>
+          <tr><td><code>1~5,9</code></td><td>섞어 쓰기 — <b>1~5조와 9조</b>가 열립니다</td></tr>
+          <tr><td><code>전체</code></td><td>모든 조 열기 (조별 통제를 쓰지 않을 때)</td></tr>
+          <tr><td><code>없음</code></td><td>모든 조 닫기</td></tr>
+        </table>
+      </div>
+      <div class="ggrid" id="gGrid"></div>
+      <p class="msg" style="color:var(--muted)">
+        조 번호를 눌러 바로 열고 닫을 수 있습니다. 금색 테두리는 <b>닫힌 조인데 제출 기록이 있는</b> 경우입니다.
+      </p>
+      <p id="groupMsg" class="msg"></p>
+    </div>
+
     <div class="viewtabs">
       <button id="viewEval" class="vtab active">📝 평가 현황</button>
       <button id="viewSurvey" class="vtab">📊 설문 결과</button>
@@ -97,6 +130,52 @@
         <p class="meta" id="subjSheet" style="margin:-8px 0 12px"></p>
         <p id="subjWarn" class="msg err" hidden></p>
         <div class="groups" id="groupCards"></div>
+      </div>
+
+      <div class="panel" id="resetPanel">
+        <h2>번호 초기화 <span class="hint">중복 제출은 처음 제출한 것만 인정됩니다</span></h2>
+        <p class="msg" style="color:var(--muted)">
+          누가 남의 번호로 먼저 제출해 버린 경우, 그 번호의 <b>처음 제출을 한 건 지웁니다.</b>
+          뒤에 같은 번호로 들어온 제출이 있으면 그것이 자동으로 인정되고, 없으면 번호가 비어 다시 응시할 수 있습니다.
+        </p>
+        <div class="row" style="margin-bottom:12px">
+          <span class="meta" id="claimStat">등록 -</span>
+        </div>
+        <div id="pendingWrap" hidden>
+          <p class="msg" style="color:var(--muted)">
+            <b>등록만 하고 아직 제출하지 않은 번호</b> — 번호를 선점해 두고 응시하지 않은 경우입니다.
+          </p>
+          <div class="chips" id="pendingChips"></div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <label for="rsSubject" style="margin:0">과목</label>
+          <select id="rsSubject"></select>
+          <label for="rsNo" style="margin:0">번호</label>
+          <input type="text" id="rsNo" placeholder="3-7" inputmode="numeric" style="max-width:110px">
+          <button id="rsGo" class="off">초기화</button>
+        </div>
+        <p id="rsMsg" class="msg"></p>
+
+        <div id="dupWrap" hidden>
+          <h2 style="margin-top:18px">중복 제출 목록</h2>
+          <div class="scroll">
+            <table id="dupTable">
+              <thead><tr><th>과목</th><th>번호</th><th class="num">제출</th><th>인정된 제출</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="wrongPanel" hidden>
+        <h2>배정과 다른 안으로 응시</h2>
+        <p class="msg" style="color:var(--muted)">조에 배정된 안이 아닌 폼으로 제출한 경우입니다. 점수는 집계에 포함됩니다.</p>
+        <div class="scroll">
+          <table id="wrongTable">
+            <thead><tr><th>과목</th><th>번호</th><th>제출한 안</th><th>배정된 안</th><th>제출시각</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
 
       <div class="panel" id="unknownPanel" hidden>
@@ -136,7 +215,7 @@
   </section>
 
 </main>
-<script src="common.js?v=7"></script>
-<script src="admin.js?v=7"></script>
+<script src="common.js?v=10"></script>
+<script src="admin.js?v=10"></script>
 </body>
 </html>

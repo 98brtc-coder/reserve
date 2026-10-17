@@ -145,6 +145,7 @@
     el('pastBtn').hidden = on;
     el('todayBtn').hidden = !on;
     el('togglePanel').hidden = on;      // 과거 조회 중에는 개폐 조작을 감춘다
+    el('groupPanel').hidden = on;
     el('dateBar').classList.toggle('past', on);
     setAuto(!on);
   }
@@ -364,10 +365,212 @@
     applyDateUI(d);
     el('dashTitle').textContent = (CFG.unitName || '') + ' 평가 현황';
     renderSwitches(d);
+    renderGroupGate(d);
     renderCombined(d);
     renderTabs(d);
     renderSubject(d);
     renderUnknown(d);
+    renderWrongPlan(d);
+    renderReset(d);
+  }
+
+  /* ── 번호 초기화 (교관용) ─────────────────────────
+     최초 제출만 인정하므로, 남의 번호를 선점한 제출을 지워 주면
+     뒤에 들어온 제출이 자동으로 승계된다. */
+  function renderReset(d) {
+    var sel = el('rsSubject');
+    var subs = d.subjects || [];
+    var want = sel.value;
+    var opts = ['<option value="*">전체 과목</option>'].concat(subs.map(function (s) {
+      return '<option value="' + esc(s.name) + '">' + esc(s.name) + '</option>';
+    })).join('');
+    if (sel.innerHTML !== opts) { sel.innerHTML = opts; if (want) sel.value = want; }
+
+    var allPeriod = (dateParam === 'all');
+    el('rsGo').disabled = allPeriod;
+    el('rsNo').disabled = allPeriod;
+    if (allPeriod) {
+      setMsg(el('rsMsg'), '전체 기간에서는 초기화할 수 없습니다. 날짜를 먼저 고르십시오.', 'err');
+    } else if (el('rsMsg').className.indexOf('err') === -1) {
+      setMsg(el('rsMsg'), '');
+    }
+
+    // 등록(선점) 현황
+    var cl = d.claims || { count: 0, pending: [] };
+    var pend = cl.pending || [];
+    el('claimStat').textContent = '등록 ' + cl.count + '명 · 등록 후 미제출 ' + pend.length + '명';
+    el('pendingWrap').hidden = pend.length === 0;
+    el('pendingChips').innerHTML = pend.map(function (no) {
+      return '<span class="chip">' + esc(no) + '</span>';
+    }).join('');
+
+    var rows = [];
+    subs.forEach(function (s) {
+      (s.dupes || []).forEach(function (x) {
+        rows.push({ subject: s.name, no: x.no, count: x.count, keptAt: x.keptAt });
+      });
+    });
+    el('dupWrap').hidden = rows.length === 0;
+    var tb = el('dupTable').querySelector('tbody');
+    tb.innerHTML = '';
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + esc(r.subject) + '</td><td><b>' + esc(r.no) + '</b></td>' +
+                     '<td class="num">' + r.count + '회</td>' +
+                     '<td>' + UNIT.timeText(r.keptAt) + '</td><td></td>';
+      var btn = document.createElement('button');
+      btn.className = 'off';
+      btn.style.padding = '6px 12px';
+      btn.style.fontSize = '13px';
+      btn.textContent = '초기화';
+      btn.disabled = allPeriod;
+      btn.addEventListener('click', function () { resetNo(r.subject, r.no); });
+      tr.lastChild.appendChild(btn);
+      tb.appendChild(tr);
+    });
+  }
+
+  async function resetNo(subject, no) {
+    var label = (subject === '*' ? '전체 과목' : subject) + ' / ' + no;
+    var extra = (subject === '*')
+      ? '· 번호 등록을 풀어 다시 등록할 수 있게 합니다\n· 처음 제출한 기록 한 건을 삭제합니다'
+      : '· 이 과목의 처음 제출 기록 한 건만 삭제합니다 (등록은 유지)';
+    if (!confirm(label + '\n\n' + extra + '\n\n되돌릴 수 없습니다. 진행하시겠습니까?')) return;
+    el('rsGo').disabled = true;
+    setMsg(el('rsMsg'), '처리 중…');
+    try {
+      var r = await UNIT.api('reset', {
+        pin: pin, subject: subject, no: no, date: dateParam
+      });
+      var parts = [];
+      if (r.released) parts.push('등록 해제 (다시 등록 가능)');
+      (r.removed || []).forEach(function (x) {
+        parts.push(x.subject + ' 제출 삭제 ' + UNIT.timeText(x.at) +
+                   (x.remaining ? ' · 남은 ' + x.remaining + '건 승계' : ''));
+      });
+      if (!parts.length) parts.push('삭제할 기록이 없었습니다');
+      setMsg(el('rsMsg'), r.no + ' 초기화 완료 — ' + parts.join(' / '), 'ok');
+    } catch (err) {
+      setMsg(el('rsMsg'), '실패: ' + err.message, 'err');
+    }
+    el('rsGo').disabled = false;
+    await load();
+  }
+
+  el('rsGo').addEventListener('click', function () {
+    var no = el('rsNo').value.trim();
+    if (!/^\d{1,3}\s*-\s*\d{1,3}$/.test(no)) {
+      return setMsg(el('rsMsg'), '번호를 조-번 형식으로 적으십시오. 예: 3-7', 'err');
+    }
+    resetNo(el('rsSubject').value || '*', no.replace(/\s/g, ''));
+  });
+  el('rsNo').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') el('rsGo').click();
+  });
+
+  /* ── 조별 개방 ───────────────────────────────────
+     구글폼은 과목 단위로만 응답을 막을 수 있어, 조 단위 통제는
+     '응시 화면에서 링크를 내주지 않는' 방식이다. 과목 자체를 닫으면
+     구글폼이 제출을 거부하므로 최종 차단은 과목 개폐로 한다. */
+  function planOf(g, pattern) {
+    var p = String(pattern || '').toUpperCase().replace(/[^AB]/g, '');
+    if (!p) return 'A';
+    return p.charAt((Number(g) - 1) % p.length);
+  }
+
+  function renderGroupGate(d) {
+    var n = d.groupCount || 50;
+    var openSet = {};
+    var unlimited = (d.openGroups === null || d.openGroups === undefined);
+    if (!unlimited) (d.openGroups || []).forEach(function (g) { openSet[g] = true; });
+
+    el('gNow').textContent = '현재 ' + (d.openGroupsText || '-');
+    if (document.activeElement !== el('gSpec')) el('gSpec').value = d.openGroupsText || '';
+
+    // 조별 제출 합계 (닫힌 조의 제출을 표시하는 데 쓴다)
+    var sub = {};
+    ((d.combined && d.combined.groups) || []).forEach(function (g) {
+      sub[g.group] = (g.subjects || []).reduce(function (a, x) { return a + x.submitted; }, 0);
+    });
+
+    var grid = el('gGrid');
+    grid.innerHTML = '';
+    for (var g = 1; g <= n; g++) {
+      (function (gg) {
+        var isOpen = unlimited || !!openSet[gg];
+        var b = document.createElement('button');
+        b.className = 'gcell' + (isOpen ? ' open' : '') +
+                      ((!isOpen && sub[String(gg)]) ? ' flag' : '');
+        b.innerHTML = gg + '<span class="pl">' + planOf(gg, d.planPattern) + '안</span>';
+        b.title = gg + '조 · ' + planOf(gg, d.planPattern) + '안 · 제출 ' + (sub[String(gg)] || 0) +
+                  '건 · ' + (isOpen ? '열림' : '닫힘');
+        b.addEventListener('click', function () {
+          var next = {};
+          for (var k = 1; k <= n; k++) if (unlimited || openSet[k]) next[k] = true;
+          if (next[gg]) delete next[gg]; else next[gg] = true;
+          sendGroups(listOf(next, n));
+        });
+        grid.appendChild(b);
+      })(g);
+    }
+  }
+
+  function listOf(set, n) {
+    var out = [];
+    for (var g = 1; g <= n; g++) if (set[g]) out.push(g);
+    return out.length ? out.join(',') : '없음';
+  }
+
+  async function sendGroups(spec) {
+    document.querySelectorAll('#gGrid button, #groupPanel button')
+      .forEach(function (b) { b.disabled = true; });
+    setMsg(el('groupMsg'), '적용 중…');
+    try {
+      var r = await UNIT.api('groups', { pin: pin, groups: spec });
+      setMsg(el('groupMsg'), '개방 조: ' + r.openGroups, 'ok');
+    } catch (err) {
+      setMsg(el('groupMsg'), '실패: ' + err.message, 'err');
+    }
+    await load();
+    document.querySelectorAll('#groupPanel button').forEach(function (b) { b.disabled = false; });
+  }
+
+  el('gAll').addEventListener('click', function () { sendGroups('전체'); });
+  el('gNone').addEventListener('click', function () { sendGroups('없음'); });
+  el('gApply').addEventListener('click', function () {
+    var v = el('gSpec').value.trim();
+    if (!v) return setMsg(el('groupMsg'), '범위를 입력하십시오. 예: 1-10,15', 'err');
+    sendGroups(v);
+  });
+  el('gA').addEventListener('click', function () { sendGroups(planGroups('A')); });
+  el('gB').addEventListener('click', function () { sendGroups(planGroups('B')); });
+
+  function planGroups(want) {
+    if (!last) return '없음';
+    var n = last.groupCount || 50, out = [];
+    for (var g = 1; g <= n; g++) if (planOf(g, last.planPattern) === want) out.push(g);
+    return out.length ? out.join(',') : '없음';
+  }
+
+  /* ── 배정과 다른 안으로 응시한 경우 ──────────────── */
+  function renderWrongPlan(d) {
+    var rows = [];
+    (d.subjects || []).forEach(function (s) {
+      (s.wrongPlan || []).forEach(function (w) {
+        rows.push({ subject: s.name, no: w.no, submitted: w.submitted, should: w.should, at: w.at });
+      });
+    });
+    el('wrongPanel').hidden = rows.length === 0;
+    var tb = el('wrongTable').querySelector('tbody');
+    tb.innerHTML = '';
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + esc(r.subject) + '</td><td><b>' + esc(r.no) + '</b></td>' +
+                     '<td class="warn">' + esc(r.submitted) + '안</td>' +
+                     '<td>' + esc(r.should) + '안</td>' +
+                     '<td>' + UNIT.timeText(r.at) + '</td>';
+      tb.appendChild(tr);
+    });
   }
 
   function renderSwitches(d) {
@@ -408,14 +611,14 @@
       .sort(function (a, b) { return b.overall - a.overall; });
 
     var thead = el('combinedTable').querySelector('thead');
-    thead.innerHTML = '<tr><th class="num">순위</th><th>조</th><th class="num">종합</th>' +
+    thead.innerHTML = '<tr><th class="num">순위</th><th>조</th><th>안</th><th class="num">종합</th>' +
       subs.map(function (s) { return '<th class="num">' + esc(s.name) + '</th>'; }).join('') +
       '<th class="num">제출</th></tr>';
 
     var tb = el('combinedTable').querySelector('tbody');
     tb.innerHTML = '';
     if (!ranked.length) {
-      tb.innerHTML = '<tr><td colspan="' + (subs.length + 4) + '" class="empty">아직 집계할 응답이 없습니다.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="' + (subs.length + 5) + '" class="empty">아직 집계할 응답이 없습니다.</td></tr>';
     }
     ranked.forEach(function (g, i) {
       var tr = document.createElement('tr');
@@ -425,6 +628,7 @@
       tr.innerHTML =
         '<td class="num rank">' + (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1) + '</td>' +
         '<td><b>' + esc(g.group) + '조</b>' + (g.complete ? '' : ' <span class="warn">미완</span>') + '</td>' +
+        '<td>' + esc(g.plan || '-') + '안</td>' +
         '<td class="num"><b>' + pct(g.overall) + '</b></td>' +
         g.subjects.map(function (s) {
           return '<td class="num"><span class="sub-rate">' + pct(s.rate) + '</span>' +
@@ -477,7 +681,11 @@
     el('stBest').textContent = ranked.length ? ranked[0].group + '조' : '-';
 
     // 어느 응답 시트를 읽고 있는지 늘 보이게 한다 (과목이 섞이는 사고 방지)
-    el('subjSheet').textContent = s.sheetName ? '응답 시트: ' + s.sheetName : '';
+    var sh = s.sheets || {};
+    var parts = [];
+    if (sh.A) parts.push((s.hasB ? 'A안 ' : '') + sh.A);
+    if (sh.B) parts.push('B안 ' + sh.B);
+    el('subjSheet').textContent = parts.length ? '응답 시트: ' + parts.join('  |  ') : '';
 
     if (s.warning) { el('subjWarn').textContent = '⚠ ' + s.warning; el('subjWarn').hidden = false; }
     else el('subjWarn').hidden = true;
@@ -500,14 +708,18 @@
       var chips = nums.map(function (n) {
         var m = byN[n];
         var cls = 'chip' + (m ? ' done' : '') + (roster[n] ? '' : ' extra');
-        return '<span class="' + cls + '">' + g.group + '-' + n +
-               (m ? ' · ' + UNIT.fmt(m.score, 0) : '') + (roster[n] ? '' : ' ?') + '</span>';
+        var dup = (m && m.count > 1) ? '<sup class="dupmark">' + m.count + '</sup>' : '';
+        return '<span class="' + cls + (dup ? ' dup' : '') + '"' +
+               (m && m.count > 1 ? ' title="' + m.count + '회 제출 — 처음 제출만 인정"' : '') + '>' +
+               g.group + '-' + n + (m ? ' · ' + UNIT.fmt(m.score, 0) : '') +
+               (roster[n] ? '' : ' ?') + dup + '</span>';
       }).join('');
 
       var div = document.createElement('div');
       div.className = 'gcard';
       div.innerHTML =
-        '<div class="ghead"><span class="gname">' + esc(g.group) + '조</span>' +
+        '<div class="ghead"><span class="gname">' + esc(g.group) + '조' +
+        (g.plan ? ' <span class="plan-badge">' + esc(g.plan) + '안</span>' : '') + '</span>' +
         '<span class="gavg">평균 ' + UNIT.fmt(g.average) + ' · ' + g.submitted + '/' + g.expected + '</span></div>' +
         '<div class="chips">' + chips + '</div>';
       wrap.appendChild(div);
@@ -558,21 +770,22 @@
   el('csvBtn').addEventListener('click', function () {
     if (!last) return;
     var subs = last.subjects || [];
-    var rows = [['구분', '과목', '조', '번', '번호', '점수', '만점', '제출시각']];
+    var rows = [['구분', '과목', '조', '번', '번호', '배정안', '제출안', '점수', '만점', '제출시각']];
     subs.forEach(function (s) {
       (s.groups || []).forEach(function (g) {
         (g.members || []).forEach(function (m) {
-          rows.push(['개인', s.name, g.group, m.n, m.no, m.score, s.maxScore || '', m.at || '']);
+          rows.push(['개인', s.name, g.group, m.n, m.no, g.plan || '', m.plan || '',
+                     m.score, s.maxScore || '', m.at || '']);
         });
       });
     });
     rows.push([]);
-    rows.push(['구분', '조', '종합득점률(%)'].concat(subs.map(function (s) { return s.name + ' 평균'; }))
+    rows.push(['구분', '조', '안', '종합득점률(%)'].concat(subs.map(function (s) { return s.name + ' 평균'; }))
       .concat(subs.map(function (s) { return s.name + ' 득점률(%)'; })));
     ((last.combined && last.combined.groups) || []).slice()
       .sort(function (a, b) { return (b.overall === null ? -1 : b.overall) - (a.overall === null ? -1 : a.overall); })
       .forEach(function (g) {
-        rows.push(['종합', g.group, g.overall === null ? '' : g.overall]
+        rows.push(['종합', g.group, g.plan || '', g.overall === null ? '' : g.overall]
           .concat(g.subjects.map(function (s) { return s.average === null ? '' : s.average; }))
           .concat(g.subjects.map(function (s) { return s.rate === null ? '' : s.rate; })));
       });

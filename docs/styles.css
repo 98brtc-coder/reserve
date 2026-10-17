@@ -325,3 +325,73 @@ input[type=date] { width: auto; min-width: 150px; }
 .legend li.zero { opacity: .5; }
 .legend li.zero .sw { background: var(--line) !important; }
 .legend .lsub { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ── 본인 번호 선택 ─────────────────────────────── */
+.me { margin-top: 18px; }
+.me-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.me-row label { margin: 0; font-size: 13px; color: var(--muted); }
+.me-row select {
+  font: inherit; font-size: 16px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--bg); color: var(--text); min-width: 88px;
+}
+.me-row button { margin-left: auto; }
+.me-prev { font-size: 15px; margin: 12px 0 0; }
+.me-hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+
+.mebar {
+  display: flex; align-items: center; gap: 10px;
+  margin: 18px 0 0; padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: var(--shadow);
+}
+.mebar-no { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mebar-plan {
+  font-size: 12px; font-weight: 800; padding: 4px 9px; border-radius: 999px;
+  background: rgba(31, 53, 84, .12); color: var(--navy-2);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mebar-plan { background: rgba(110, 160, 230, .18); color: #a9c8ef; }
+}
+.mebar button { margin-left: auto; padding: 7px 12px; font-size: 13px; }
+.plan-badge {
+  font-size: 11px; font-weight: 800; margin-left: 6px;
+  padding: 2px 7px; border-radius: 999px;
+  background: rgba(31, 53, 84, .12); color: var(--navy-2); vertical-align: 2px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .plan-badge { background: rgba(110, 160, 230, .18); color: #a9c8ef; }
+}
+
+/* ── 조별 개방 격자 ─────────────────────────────── */
+.ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
+.gcell {
+  font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  padding: 7px 2px; border-radius: 10px; text-align: center;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.gcell.open { background: rgba(31, 122, 77, .15); border-color: rgba(31, 122, 77, .45); color: var(--ok); }
+.gcell .pl { display: block; font-size: 10px; font-weight: 800; opacity: .75; margin-top: 1px; }
+.gcell.flag { box-shadow: inset 0 0 0 2px var(--gold); }
+.gcell:disabled { opacity: .5; cursor: progress; }
+.mebar-lock { font-size: 12px; color: var(--muted); }
+.lockbtn { margin-left: auto; padding: 7px 11px; font-size: 14px; line-height: 1; }
+.chip.dup { box-shadow: inset 0 0 0 2px var(--gold); }
+.dupmark { font-size: 9px; font-weight: 800; color: var(--gold); margin-left: 2px; }
+
+/* ── 입력 방법 안내 ─────────────────────────────── */
+.howto {
+  margin: 10px 0 14px; padding: 12px 14px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+  font-size: 13px;
+}
+.howto > b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.howto table { width: auto; }
+.howto td { padding: 4px 14px 4px 0; border: none; vertical-align: top; }
+.howto code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; font-weight: 700;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+}
