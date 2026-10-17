@@ -6,8 +6,8 @@
 <title>관리자 · 평가 현황</title>
 <meta name="theme-color" content="#16243a">
 <meta name="robots" content="noindex, nofollow">
-<link rel="stylesheet" href="styles.css?v=15">
-<script src="config.js?v=15"></script>
+<link rel="stylesheet" href="styles.css?v=18">
+<script src="config.js?v=18"></script>
 </head>
 <body>
 <main class="wrap wide">
@@ -94,7 +94,7 @@
     <!-- ── 평가 현황 ─────────────────────────────── -->
     <div id="evalView">
       <div class="panel">
-        <h2>종합 순위 <span class="hint">과목별 득점률(%) 평균</span></h2>
+        <h2>종합 순위 <span class="hint">과목별 점수의 평균 · 100점 만점</span></h2>
         <div class="scroll"><table id="combinedTable"><thead></thead><tbody></tbody></table></div>
         <p id="combinedNote" class="msg" style="color:var(--muted)"></p>
       </div>
@@ -105,13 +105,21 @@
           <div class="tabs" id="tabs"></div>
         </div>
         <div class="stats" style="margin-bottom:16px">
-          <div class="stat"><div class="k">제출</div><div class="v" id="stSubmitted">-</div></div>
+          <div class="stat"><div class="k">제출 / 등록</div><div class="v" id="stSubmitted">-</div></div>
           <div class="stat"><div class="k">참여율</div><div class="v" id="stRate">-</div></div>
           <div class="stat"><div class="k">평균 점수</div><div class="v" id="stAvg">-</div></div>
           <div class="stat"><div class="k">1위 조</div><div class="v" id="stBest">-</div></div>
         </div>
         <p class="meta" id="subjSheet" style="margin:-8px 0 12px"></p>
         <p id="subjWarn" class="msg err" hidden></p>
+
+        <div id="missWrap" hidden>
+          <h2 style="margin:4px 0 2px">미제출자 <span class="hint" id="missCount"></span></h2>
+          <p class="msg" style="color:var(--muted);margin:0 0 8px">
+            오늘 번호를 <b>등록한 사람</b> 중 이 과목을 아직 내지 않은 번호입니다. 그대로 호명하십시오.
+          </p>
+          <div class="chips" id="missChips"></div>
+        </div>
         <div class="groups" id="groupCards"></div>
       </div>
 
@@ -196,7 +204,7 @@
   </section>
 
 </main>
-<script src="common.js?v=15"></script>
-<script src="admin.js?v=15"></script>
+<script src="common.js?v=18"></script>
+<script src="admin.js?v=18"></script>
 </body>
 </html>

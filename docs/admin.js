@@ -1,9 +1,16 @@
-/* 관리자 화면: 과목별 개폐 · 과목별 현황 · 종합 순위(득점률 평균) */
+/* 관리자 화면: 과목별 개폐 · 과목별 현황 · 종합 순위(과목 점수 평균, 100점 만점) */
 (function () {
   var CFG = UNIT.CFG;
   var el = function (id) { return document.getElementById(id); };
   var PIN_KEY = 'rf_admin_pin';
-  var pin = sessionStorage.getItem(PIN_KEY) || '';
+
+  /* 비공개 탭·쿠키 차단·file:// 환경에서는 저장소 접근이 예외를 던진다.
+     감싸지 않으면 여기서 스크립트가 중단되어 버튼이 전부 죽는다. */
+  function keep(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* 무시 */ } }
+  function recall(k) { try { return sessionStorage.getItem(k) || ''; } catch (e) { return ''; } }
+  function forget(k) { try { sessionStorage.removeItem(k); } catch (e) { /* 무시 */ } }
+
+  var pin = recall(PIN_KEY);
   var timer = null, auto = true, last = null, activeTab = 0;
   var activeView = 'eval', surveyData = null;
   var dateParam = '', pastMode = false, knownDates = [];
@@ -18,7 +25,9 @@
     node.textContent = text || '';
     node.className = 'msg' + (kind ? ' ' + kind : '');
   }
-  function pct(n) { return n === null || n === undefined ? '-' : UNIT.fmt(n, 1) + '%'; }
+  /* 모든 과목이 100점 만점이므로 환산 점수 = 실제 점수.
+     만점이 다른 과목이 섞이면 100점 만점으로 환산한 점수가 된다. */
+  function pts(n) { return n === null || n === undefined ? '-' : UNIT.fmt(n, 1) + '점'; }
 
   /* ── 로그인 ───────────────────────────────────────── */
   /* PIN 확인용 요청(ping)을 따로 보내지 않는다.
@@ -29,7 +38,7 @@
     try {
       var d = await UNIT.api('dashboard', { pin: value, date: '' });
       pin = value;
-      sessionStorage.setItem(PIN_KEY, pin);
+      keep(PIN_KEY, pin);
       el('loginView').hidden = true;
       el('dashView').hidden = false;
       last = d;
@@ -48,7 +57,7 @@
   });
   el('pin').addEventListener('keydown', function (e) { if (e.key === 'Enter') el('loginBtn').click(); });
   el('logoutBtn').addEventListener('click', function () {
-    sessionStorage.removeItem(PIN_KEY);
+    forget(PIN_KEY);
     if (timer) clearInterval(timer);
     location.reload();
   });
@@ -717,10 +726,9 @@
         '<td class="num rank">' + (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1) + '</td>' +
         '<td><b>' + esc(g.group) + '조</b>' + (g.complete ? '' : ' <span class="warn">미완</span>') + '</td>' +
         '<td>' + esc(g.plan || '-') + '안</td>' +
-        '<td class="num"><b>' + pct(g.overall) + '</b></td>' +
+        '<td class="num"><b>' + pts(g.overall) + '</b></td>' +
         g.subjects.map(function (s) {
-          return '<td class="num"><span class="sub-rate">' + pct(s.rate) + '</span>' +
-                 '<small class="sub-sub">' + (s.average === null ? '-' : UNIT.fmt(s.average, 1)) + '점</small></td>';
+          return '<td class="num"><span class="sub-rate">' + pts(s.rate) + '</span></td>';
         }).join('') +
         '<td class="num">' + done + ' / ' + need + '</td>';
       tb.appendChild(tr);
@@ -729,7 +737,7 @@
     var miss = (d.combined && d.combined.missingMax) || [];
     el('combinedNote').textContent = miss.length
       ? '※ 만점을 알 수 없어 종합에서 제외된 과목: ' + miss.join(', ') + ' — 과목 시트의 "만점" 칸을 채우십시오.'
-      : '과목마다 만점이 달라도 공정하게 비교되도록 득점률(%)로 환산해 평균을 냅니다.';
+      : '점수는 100점 만점으로 환산한 값입니다. 응시하지 않은 과목은 평균에서 제외됩니다.';
   }
 
   function renderTabs(d) {
@@ -760,8 +768,20 @@
 
     var t = s.totals || {};
     var maxTxt = s.maxScore ? ' <small>/ ' + s.maxScore + '</small>' : '';
-    el('stSubmitted').innerHTML = (t.submitted || 0) + ' <small>/ ' + (t.expected || 0) + '</small>';
-    el('stRate').innerHTML = (t.expected ? Math.round((t.submitted / t.expected) * 100) : 0) + '<small>%</small>';
+    // 정원(최대 500)이 아니라 오늘 등록한 인원을 기준으로 본다
+    var basis = t.registered || 0;
+    el('stSubmitted').innerHTML = (t.submitted || 0) +
+      ' <small>/ ' + (basis || (t.expected || 0)) + (basis ? ' 등록' : ' 정원') + '</small>';
+    var den = basis || t.expected || 0;
+    el('stRate').innerHTML = (den ? Math.round((t.submitted / den) * 100) : 0) + '<small>%</small>';
+
+    // 미제출자
+    var miss = s.missing || [];
+    el('missWrap').hidden = miss.length === 0;
+    el('missCount').textContent = miss.length + '명';
+    el('missChips').innerHTML = miss.map(function (no) {
+      return '<span class="chip miss">' + esc(no) + '</span>';
+    }).join('');
     el('stAvg').innerHTML = (t.average === null || t.average === undefined ? '-' : UNIT.fmt(t.average)) + maxTxt;
 
     var ranked = (s.groups || []).filter(function (g) { return g.average !== null; })
@@ -779,19 +799,25 @@
     else el('subjWarn').hidden = true;
 
     wrap.innerHTML = '';
-    var groups = (s.groups || []).slice().sort(function (a, b) { return Number(a.group) - Number(b.group); });
+    // 등록이나 제출이 있는 조만 보여 준다 (정원 50조를 그대로 두어도 화면이 깨끗하다)
+    var groups = (s.groups || []).slice()
+      .filter(function (g) { return (g.registered || 0) > 0 || (g.submitted || 0) > 0; })
+      .sort(function (a, b) { return Number(a.group) - Number(b.group); });
     if (!groups.length) {
-      wrap.innerHTML = '<p class="empty">설정 시트의 조 개수 / 조별 인원을 확인하십시오.</p>';
+      wrap.innerHTML = '<p class="empty">아직 등록·제출한 조가 없습니다.</p>';
       return;
     }
     groups.forEach(function (g) {
       var byN = {};
       (g.members || []).forEach(function (m) { byN[m.n] = m; });
-      var roster = {};
-      (g.slots || []).forEach(function (n) { roster[n] = true; });
-      var nums = (g.slots || []).slice();
-      Object.keys(byN).forEach(function (n) { if (!roster[n]) nums.push(Number(n)); });
+      // 칩 목록 = 오늘 등록한 번호 + 제출된 번호 (등록이 없으면 정원으로 대체)
+      var reg = {};
+      ((g.regSlots && g.regSlots.length) ? g.regSlots : (g.slots || []))
+        .forEach(function (n) { reg[n] = true; });
+      var nums = Object.keys(reg).map(Number);
+      Object.keys(byN).forEach(function (n) { if (!reg[n]) nums.push(Number(n)); });
       nums.sort(function (a, b) { return a - b; });
+      var roster = reg;
 
       var chips = nums.map(function (n) {
         var m = byN[n];
@@ -808,7 +834,10 @@
       div.innerHTML =
         '<div class="ghead"><span class="gname">' + esc(g.group) + '조' +
         (g.plan ? ' <span class="plan-badge">' + esc(g.plan) + '안</span>' : '') + '</span>' +
-        '<span class="gavg">평균 ' + UNIT.fmt(g.average) + ' · ' + g.submitted + '/' + g.expected + '</span></div>' +
+        '<span class="gavg">평균 ' + UNIT.fmt(g.average) + ' · ' + g.submitted + '/' +
+        ((g.registered || 0) > 0 ? g.registered : g.expected) +
+        ((g.missing && g.missing.length) ? ' <span class="warn">미제출 ' + g.missing.length + '</span>' : '') +
+        '</span></div>' +
         '<div class="chips">' + chips + '</div>';
       wrap.appendChild(div);
     });
@@ -867,8 +896,8 @@
       });
     });
     rows.push([]);
-    rows.push(['구분', '조', '안', '종합득점률(%)'].concat(subs.map(function (s) { return s.name + ' 평균'; }))
-      .concat(subs.map(function (s) { return s.name + ' 득점률(%)'; })));
+    rows.push(['구분', '조', '안', '종합점수(100점 만점)'].concat(subs.map(function (s) { return s.name + ' 평균'; }))
+      .concat(subs.map(function (s) { return s.name + ' 환산점수'; })));
     ((last.combined && last.combined.groups) || []).slice()
       .sort(function (a, b) { return (b.overall === null ? -1 : b.overall) - (a.overall === null ? -1 : a.overall); })
       .forEach(function (g) {
