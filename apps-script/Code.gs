@@ -155,6 +155,7 @@ function onOpen() {
     .addItem('설문 닫기', 'menuSurveyClose')
     .addSeparator()
     .addItem('문제 순서 섞기 켜기', 'menuShuffleOn')
+    .addItem('응답 시트 다시 찾기', 'menuRefindSheets')
     .addItem('링크 캐시 비우기', 'menuClearLinks')
     .addItem('종합 순위 보기', 'menuSummary')
     .addToUi();
@@ -189,6 +190,36 @@ function menuShuffleOn() {
   });
   SpreadsheetApp.getUi().alert('문제 순서 섞기',
     '적용: ' + (done.join(', ') || '없음') + (failed.length ? '\n\n실패:\n' + failed.join('\n') : ''),
+    SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+/**
+ * 과목 시트의 "응답시트" 칸을 비워 자동 탐색을 다시 돌린다.
+ * 응답 탭 이름을 바꾼 뒤에 쓴다(폼 문항 제목과 헤더를 대조해 다시 연결한다).
+ */
+function menuRefindSheets() {
+  var sh = subjectsSheet_(), map = ensureSubjectColumns_(sh);
+  var n = sh.getLastRow() - 1;
+  if (n > 0) {
+    ['응답시트', 'B안_응답시트'].forEach(function (k) {
+      if (map[k]) sh.getRange(2, map[k], n, 1).clearContent();
+    });
+  }
+  CacheService.getScriptCache().remove(STATE_CACHE_KEY);
+
+  // 바로 한 번 돌려서 결과를 보여 준다
+  var cfg = readConfig_();
+  var d = dashboard_(cfg, todayKey_());
+  var lines = d.subjects.map(function (x) {
+    var sheets = x.sheets || {};
+    var t = x.name + ' → ';
+    t += (sheets.A ? (x.hasB ? 'A안 ' : '') + sheets.A : 'A안 못 찾음');
+    if (x.hasB) t += ' / ' + (sheets.B ? 'B안 ' + sheets.B : 'B안 못 찾음');
+    if (x.warning) t += '\n    ⚠ ' + x.warning;
+    return t;
+  });
+  SpreadsheetApp.getUi().alert('응답 시트 다시 찾기',
+    lines.join('\n\n') + '\n\n못 찾은 항목은 과목 시트의 "응답시트" 칸에 탭 이름을 직접 적어 주십시오.',
     SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
