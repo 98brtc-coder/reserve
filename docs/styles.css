@@ -410,3 +410,40 @@ input[type=date] { width: auto; min-width: 150px; }
    [hidden]{display:none} 를 눌러 버려, 숨겼다고 생각한 요소가
    계속 보이는 문제가 있었다. 전역으로 못 박는다. */
 [hidden] { display: none !important; }
+
+/* ── 조별 개방 현황판 ───────────────────────────────
+   열림/닫힘을 색만으로 구분하면 적록색약에서 읽히지 않으므로
+   채워진 원(열림) / 빈 원(닫힘) 으로 모양까지 다르게 한다. */
+:root { --lamp-on: #1f7a4d; --lamp-off: #b3261e; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --lamp-on: #2fbf71; --lamp-off: #e66767; }
+}
+:root[data-theme="dark"] { --lamp-on: #2fbf71; --lamp-off: #e66767; }
+
+.mxlegend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 12px; font-size: 12px; color: var(--muted); }
+.mxkey { display: inline-flex; align-items: center; gap: 5px; }
+.mxkey.mxorder { color: var(--muted); }
+
+.lamp {
+  flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%;
+  box-sizing: border-box; display: inline-block;
+}
+.lamp.on { background: var(--lamp-on); border: 1px solid var(--lamp-on); }
+.lamp.off { background: transparent; border: 2px solid var(--lamp-off); }
+
+.mxgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; }
+.mxcell {
+  border: 1px solid var(--line); border-radius: 12px; padding: 8px 9px;
+  background: var(--surface);
+}
+.mxcell.full { border-color: rgba(31, 122, 77, .45); background: rgba(31, 122, 77, .06); }
+.mxcell.shut { background: var(--bg); }
+.mxcell.part { border-color: rgba(200, 162, 74, .55); background: rgba(200, 162, 74, .07); }
+.mxg {
+  font-size: 13px; font-weight: 800; margin-bottom: 5px;
+  display: flex; align-items: baseline; gap: 5px; font-variant-numeric: tabular-nums;
+}
+.mxplan { font-size: 10px; font-weight: 800; color: var(--muted); }
+.mxrow { display: flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1.7; }
+.mxname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.mxcell.full .mxname { color: var(--text); }

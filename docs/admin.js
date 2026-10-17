@@ -365,6 +365,7 @@
     applyDateUI(d);
     el('dashTitle').textContent = (CFG.unitName || '') + ' 평가 현황';
     renderEvalGates(d);
+    renderGateMatrix(d);
     renderSurveySwitch(d);
     renderCombined(d);
     renderTabs(d);
@@ -494,12 +495,11 @@
     // 머리말 — 개폐 상태는 '열린 조'에서 자동으로 결정된다
     var head = document.createElement('div');
     head.className = 'gate-head';
-    var opened = esc(s.openGroupsText || '-');
+    var opened = esc(s.open ? (s.openGroupsText || '없음') : '없음');
     head.innerHTML = '<div><div class="name">' + esc(s.name) +
       (s.hasB ? ' <span class="plan-badge">A/B</span>' : '') + '</div>' +
-      '<div class="state">' +
-      (s.open ? '응답 받는 중 · 열린 조 <b>' + opened + '</b>'
-              : '<b>마감</b> — 열린 조 없음 (폼도 닫혀 제출 불가)') +
+      '<div class="state">현재 열린 조 <b>' + opened + '</b>' +
+      (s.open ? '' : ' · 폼이 닫혀 제출 불가') +
       (s.formLinked ? '' : ' · <span class="warn">폼 링크 없음</span>') + '</div></div>';
     box.appendChild(head);
 
@@ -571,6 +571,65 @@
     body.appendChild(grid);
     box.appendChild(body);
     return box;
+  }
+
+  /* ── 조별 개방 현황판 ────────────────────────────
+     조 하나하나에 과목별 신호등을 띄운다.
+     적록은 색맹에서 구분이 어려우므로 색만 쓰지 않고
+     채워진 원(열림) / 빈 원(닫힘) 으로 모양까지 다르게 한다. */
+  function openForGroup(s, g) {
+    if (!s.open) return false;
+    var og = s.openGroups;
+    if (og === null || og === undefined) return true;
+    return og.indexOf(Number(g)) !== -1;
+  }
+
+  function renderGateMatrix(d) {
+    var subs = d.subjects || [];
+    var n = d.groupCount || 50;
+    var grid = el('gateMatrix');
+    var legend = el('matrixLegend');
+    grid.innerHTML = '';
+    legend.innerHTML = '';
+
+    if (!subs.length) {
+      el('matrixSummary').textContent = '';
+      return;
+    }
+
+    legend.innerHTML =
+      '<span class="mxkey"><i class="lamp on"></i>열림</span>' +
+      '<span class="mxkey"><i class="lamp off"></i>닫힘</span>' +
+      '<span class="mxkey mxorder">칸 안의 순서: ' +
+        subs.map(function (s) { return esc(s.name); }).join(' → ') + '</span>';
+
+    var allOpen = 0, allShut = 0, partial = 0;
+    var hasB = subs.some(function (s) { return s.hasB; });
+
+    for (var g = 1; g <= n; g++) {
+      var states = subs.map(function (s) { return openForGroup(s, g); });
+      var on = states.filter(Boolean).length;
+      if (on === subs.length) allOpen++;
+      else if (on === 0) allShut++;
+      else partial++;
+
+      var cell = document.createElement('div');
+      cell.className = 'mxcell' + (on === 0 ? ' shut' : (on === subs.length ? ' full' : ' part'));
+      var head = '<div class="mxg">' + g + '조' +
+        (hasB ? '<span class="mxplan">' + planOf(g, d.planPattern) + '안</span>' : '') + '</div>';
+      var rows = subs.map(function (s, i) {
+        return '<div class="mxrow" title="' + esc(s.name) + ' — ' + (states[i] ? '열림' : '닫힘') + '">' +
+               '<i class="lamp ' + (states[i] ? 'on' : 'off') + '"></i>' +
+               '<span class="mxname">' + esc(s.name) + '</span></div>';
+      }).join('');
+      cell.innerHTML = head + rows;
+      grid.appendChild(cell);
+    }
+
+    el('matrixSummary').innerHTML =
+      '전 과목 열림 <b>' + allOpen + '</b>개 조 · ' +
+      '일부만 열림 <b>' + partial + '</b>개 조 · ' +
+      '전 과목 닫힘 <b>' + allShut + '</b>개 조';
   }
 
   function planGroups(want, n, pattern) {
