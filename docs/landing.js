@@ -201,7 +201,7 @@
       '<span class="card-body">' +
         '<span class="card-title">' + esc(o.title) +
           (o.badge ? '<span class="plan-badge">' + esc(o.badge) + '</span>' : '') + '</span>' +
-        '<span class="card-desc">' + o.desc + '</span>' +
+        (o.desc ? '<span class="card-desc">' + o.desc + '</span>' : '') +
       '</span>' +
       '<span class="pill ' + o.pillCls + '">' + o.pill + '</span>';
     if (o.tap) {
@@ -221,9 +221,9 @@
     var tpl = (s.prefill && s.prefill[which]) || '';
     var href = tpl ? tpl.replace('__NO__', encodeURIComponent(me.g + '-' + me.n)) : url;
     var badge = hasB ? plan + '안' : '';
-    var desc = tpl
-      ? '번호 <b>' + me.g + '-' + me.n + '</b> 이(가) 미리 입력되어 있습니다. 고치지 마십시오.'
-      : '첫 질문에 <b>' + me.g + '-' + me.n + '</b> 을(를) 그대로 입력하십시오.';
+    // 번호가 자동으로 채워지므로 따로 안내하지 않는다.
+    // 자동입력이 안 되는 폼일 때만 번호를 알려 준다.
+    var desc = tpl ? '' : '첫 질문에 <b>' + me.g + '-' + me.n + '</b> 을(를) 입력하십시오.';
 
     if (!url) {
       return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,

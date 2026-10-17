@@ -404,3 +404,9 @@ input[type=date] { width: auto; min-width: 150px; }
 .gate-body input[type=text] { max-width: 150px; font-size: 15px; padding: 8px 10px; }
 .gate-body button { padding: 8px 11px; font-size: 13px; }
 .gate .ggrid { margin-top: 10px; }
+
+/* ── hidden 속성이 항상 이기도록 ──────────────────────
+   .mebar{display:flex} 같은 작성자 규칙이 브라우저 기본
+   [hidden]{display:none} 를 눌러 버려, 숨겼다고 생각한 요소가
+   계속 보이는 문제가 있었다. 전역으로 못 박는다. */
+[hidden] { display: none !important; }
