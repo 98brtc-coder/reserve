@@ -491,19 +491,16 @@
     var box = document.createElement('div');
     box.className = 'gate' + (s.open ? ' on' : '');
 
-    // 머리말 + 과목 개폐
+    // 머리말 — 개폐 상태는 '열린 조'에서 자동으로 결정된다
     var head = document.createElement('div');
     head.className = 'gate-head';
+    var opened = esc(s.openGroupsText || '-');
     head.innerHTML = '<div><div class="name">' + esc(s.name) +
       (s.hasB ? ' <span class="plan-badge">A/B</span>' : '') + '</div>' +
-      '<div class="state">' + (s.open ? '응답 받는 중' : '마감됨') +
-      ' · 열린 조 ' + esc(s.openGroupsText || '-') +
+      '<div class="state">' +
+      (s.open ? '응답 받는 중 · 열린 조 <b>' + opened + '</b>'
+              : '<b>마감</b> — 열린 조 없음 (폼도 닫혀 제출 불가)') +
       (s.formLinked ? '' : ' · <span class="warn">폼 링크 없음</span>') + '</div></div>';
-    var tbtn = document.createElement('button');
-    tbtn.textContent = s.open ? '닫기' : '열기';
-    tbtn.className = s.open ? 'off' : 'on';
-    tbtn.addEventListener('click', function () { toggle('subject', s.name, !s.open, s.name); });
-    head.appendChild(tbtn);
     box.appendChild(head);
 
     // 조 지정
@@ -588,7 +585,9 @@
     setMsg(el('toggleMsg'), '적용 중…');
     try {
       var r = await UNIT.api('groups', { pin: pin, subject: subject, groups: spec });
-      setMsg(el('toggleMsg'), subject + ' — 열린 조: ' + r.openGroups, 'ok');
+      var txt = subject + ' — 열린 조 ' + r.openGroups +
+                ' · 폼 ' + (r.formOpen ? '열림' : '닫힘(제출 불가)');
+      setMsg(el('toggleMsg'), r.warning ? txt + ' (' + r.warning + ')' : txt, 'ok');
     } catch (err) {
       setMsg(el('toggleMsg'), '실패: ' + err.message, 'err');
     }

@@ -225,25 +225,26 @@
       ? '번호 <b>' + me.g + '-' + me.n + '</b> 이(가) 미리 입력되어 있습니다. 고치지 마십시오.'
       : '첫 질문에 <b>' + me.g + '-' + me.n + '</b> 을(를) 그대로 입력하십시오.';
 
-    if (!groupOpen(s, me.g)) {
-      return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,
-        mode: 'groupwait', tap: false, pill: '대기', pillCls: 'shut',
-        msg: state.groupClosedMessage || '아직 귀 조의 평가 시간이 아닙니다. 교관 안내에 따라 주십시오.' });
-    }
     if (!url) {
       return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,
         mode: 'none', tap: false, pill: '준비 중', pillCls: 'shut',
         msg: badge ? (badge + ' 폼이 아직 준비되지 않았습니다. 교관에게 알려 주십시오.')
                    : '아직 준비되지 않았습니다. 교관 안내에 따라 주십시오.' });
     }
-    if (s.open === true) {
-      return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,
-        mode: 'live', tap: true, url: href, pill: '진행 중', pillCls: 'open' });
-    }
+    // 과목 자체가 닫혔으면 '마감', 과목은 열렸는데 내 조 차례가 아니면 '대기'
     if (s.open === false && !isStale) {
       return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,
         mode: 'closed', tap: false, pill: '마감', pillCls: 'shut',
         msg: state.evalClosedMessage || '평가 시간이 아닙니다. 교관 안내에 따라 주십시오.' });
+    }
+    if (!groupOpen(s, me.g)) {
+      return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,
+        mode: 'groupwait', tap: false, pill: '대기', pillCls: 'shut',
+        msg: state.groupClosedMessage || '아직 귀 조의 평가 시간이 아닙니다. 교관 안내에 따라 주십시오.' });
+    }
+    if (s.open === true) {
+      return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,
+        mode: 'live', tap: true, url: href, pill: '진행 중', pillCls: 'open' });
     }
     return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,
       mode: 'pending', tap: allowTap, url: href, pill: '확인 중', pillCls: '',
