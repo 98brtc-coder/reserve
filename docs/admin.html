@@ -6,8 +6,8 @@
 <title>관리자 · 평가 현황</title>
 <meta name="theme-color" content="#16243a">
 <meta name="robots" content="noindex, nofollow">
-<link rel="stylesheet" href="styles.css?v=14">
-<script src="config.js?v=14"></script>
+<link rel="stylesheet" href="styles.css?v=15">
+<script src="config.js?v=15"></script>
 </head>
 <body>
 <main class="wrap wide">
@@ -60,13 +60,6 @@
 
     <div class="panel" id="togglePanel">
       <h2>평가 개폐 <span class="hint">과목별로 열고 닫고, 응시할 조를 지정합니다</span></h2>
-      <div id="evalGates"></div>
-
-      <h2 style="margin:22px 0 4px">조별 개방 현황 <span class="hint">조마다 어느 과목이 열려 있는지</span></h2>
-      <p class="meta" id="matrixSummary">-</p>
-      <div class="mxlegend" id="matrixLegend"></div>
-      <div class="mxgrid" id="gateMatrix"></div>
-
       <div class="howto">
         <b>열 조 입력 방법</b>
         <table>
@@ -77,6 +70,13 @@
           <tr><td><code>없음</code></td><td>모든 조 닫기</td></tr>
         </table>
       </div>
+      <div id="evalGates"></div>
+
+      <h2 style="margin:22px 0 4px">조별 개방 현황 <span class="hint">조마다 어느 과목이 열려 있는지</span></h2>
+      <p class="meta" id="matrixSummary">-</p>
+      <div class="mxlegend" id="matrixLegend"></div>
+      <div class="mxgrid" id="gateMatrix"></div>
+
       <p id="toggleMsg" class="msg"></p>
     </div>
 
@@ -196,7 +196,7 @@
   </section>
 
 </main>
-<script src="common.js?v=14"></script>
-<script src="admin.js?v=14"></script>
+<script src="common.js?v=15"></script>
+<script src="admin.js?v=15"></script>
 </body>
 </html>
