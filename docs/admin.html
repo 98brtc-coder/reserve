@@ -6,8 +6,8 @@
 <title>관리자 · 평가 현황</title>
 <meta name="theme-color" content="#16243a">
 <meta name="robots" content="noindex, nofollow">
-<link rel="stylesheet" href="styles.css?v=10">
-<script src="config.js?v=10"></script>
+<link rel="stylesheet" href="styles.css?v=11">
+<script src="config.js?v=11"></script>
 </head>
 <body>
 <main class="wrap wide">
@@ -59,35 +59,10 @@
     </div>
 
     <div class="panel" id="togglePanel">
-      <div class="row" style="justify-content:space-between;margin-bottom:12px">
-        <h2 style="margin:0">평가 · 설문 개폐</h2>
-        <div class="row">
-          <button id="allOpenBtn" class="on">평가 전체 열기</button>
-          <button id="allCloseBtn" class="off">평가 전체 닫기</button>
-        </div>
-      </div>
-      <div class="switches" id="switches"></div>
-      <p id="toggleMsg" class="msg"></p>
-    </div>
-
-    <div class="panel" id="groupPanel">
-      <div class="row" style="justify-content:space-between;margin-bottom:12px">
-        <h2 style="margin:0">조별 개방 <span class="hint">열린 조만 응시 화면이 열립니다</span></h2>
-        <div class="row">
-          <button id="gAll" class="on">전체 열기</button>
-          <button id="gNone" class="off">전체 닫기</button>
-          <button id="gA" class="ghost">A안 조만</button>
-          <button id="gB" class="ghost">B안 조만</button>
-        </div>
-      </div>
-      <div class="row" style="margin-bottom:6px">
-        <label for="gSpec" style="margin:0">열 조</label>
-        <input type="text" id="gSpec" placeholder="1,2,7  또는  1~7" style="max-width:220px">
-        <button id="gApply">적용</button>
-        <span class="meta" id="gNow">현재 -</span>
-      </div>
+      <h2>평가 개폐 <span class="hint">과목별로 열고 닫고, 응시할 조를 지정합니다</span></h2>
+      <div id="evalGates"></div>
       <div class="howto">
-        <b>입력 방법</b>
+        <b>열 조 입력 방법</b>
         <table>
           <tr><td><code>1,2,7</code></td><td>쉼표 — <b>1조·2조·7조만</b> 열립니다 (나머지는 닫힘)</td></tr>
           <tr><td><code>1~7</code></td><td>물결 — <b>1조부터 7조까지</b> 연속으로 열립니다</td></tr>
@@ -96,11 +71,13 @@
           <tr><td><code>없음</code></td><td>모든 조 닫기</td></tr>
         </table>
       </div>
-      <div class="ggrid" id="gGrid"></div>
-      <p class="msg" style="color:var(--muted)">
-        조 번호를 눌러 바로 열고 닫을 수 있습니다. 금색 테두리는 <b>닫힌 조인데 제출 기록이 있는</b> 경우입니다.
-      </p>
-      <p id="groupMsg" class="msg"></p>
+      <p id="toggleMsg" class="msg"></p>
+    </div>
+
+    <div class="panel" id="surveyPanel">
+      <h2>설문 개폐 <span class="hint">무기명 · 조 구분 없음</span></h2>
+      <div class="switches" id="surveySwitch"></div>
+      <p id="surveyToggleMsg" class="msg"></p>
     </div>
 
     <div class="viewtabs">
@@ -135,8 +112,8 @@
       <div class="panel" id="resetPanel">
         <h2>번호 초기화 <span class="hint">중복 제출은 처음 제출한 것만 인정됩니다</span></h2>
         <p class="msg" style="color:var(--muted)">
-          누가 남의 번호로 먼저 제출해 버린 경우, 그 번호의 <b>처음 제출을 한 건 지웁니다.</b>
-          뒤에 같은 번호로 들어온 제출이 있으면 그것이 자동으로 인정되고, 없으면 번호가 비어 다시 응시할 수 있습니다.
+          "누가 제 번호를 쓰고 있는데요?" 라고 하면 그 번호를 적고 <b>초기화</b>를 누르십시오.
+          <b>그 번호의 모든 제출 기록(전 과목)과 등록이 한꺼번에 삭제</b>되어, 본인이 바로 다시 등록·응시할 수 있습니다.
         </p>
         <div class="row" style="margin-bottom:12px">
           <span class="meta" id="claimStat">등록 -</span>
@@ -148,11 +125,9 @@
           <div class="chips" id="pendingChips"></div>
         </div>
         <div class="row" style="margin-top:14px">
-          <label for="rsSubject" style="margin:0">과목</label>
-          <select id="rsSubject"></select>
           <label for="rsNo" style="margin:0">번호</label>
-          <input type="text" id="rsNo" placeholder="3-7" inputmode="numeric" style="max-width:110px">
-          <button id="rsGo" class="off">초기화</button>
+          <input type="text" id="rsNo" placeholder="3-7" inputmode="numeric" style="max-width:120px">
+          <button id="rsGo" class="off">전부 삭제</button>
         </div>
         <p id="rsMsg" class="msg"></p>
 
@@ -215,7 +190,7 @@
   </section>
 
 </main>
-<script src="common.js?v=10"></script>
-<script src="admin.js?v=10"></script>
+<script src="common.js?v=11"></script>
+<script src="admin.js?v=11"></script>
 </body>
 </html>

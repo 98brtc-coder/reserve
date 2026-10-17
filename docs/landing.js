@@ -54,9 +54,11 @@
     return p.charAt((Number(g) - 1) % p.length);
   }
 
-  function groupOpen(g) {
-    if (!state || state.openGroups === null || state.openGroups === undefined) return true;
-    return state.openGroups.indexOf(Number(g)) !== -1;
+  /* 조별 개방은 과목마다 따로 관리된다 */
+  function groupOpen(s, g) {
+    var og = s && s.openGroups;
+    if (og === null || og === undefined) return true;
+    return og.indexOf(Number(g)) !== -1;
   }
 
   /* ── config.js 만으로 만드는 예비 상태 ──────────── */
@@ -68,9 +70,8 @@
       groupCount: Number(CFG.groupCount) || 50,
       memberCount: Number(CFG.memberCount) || 10,
       planPattern: CFG.planPattern || 'ABBA',
-      openGroups: null,
       subjects: (CFG.subjects || []).map(function (s) {
-        return { name: s.name, open: null, hasB: !!s.urlB,
+        return { name: s.name, open: null, hasB: !!s.urlB, openGroups: null,
                  urls: { A: s.urlA || '', B: s.urlB || '' },
                  prefill: { A: '', B: '' } };
       }),
@@ -119,16 +120,6 @@
     }
     if (keepG) g.value = keepG;
     if (keepN) n.value = keepN;
-    preview();
-  }
-
-  function preview() {
-    var g = Number(el('selG').value), n = Number(el('selN').value);
-    if (!g || !n) { el('mePreview').textContent = ''; return; }
-    var hasB = (state.subjects || []).some(function (s) { return s.hasB; });
-    var plan = planFor(g, state.planPattern);
-    el('mePreview').innerHTML = '내 번호 <b>' + g + '-' + n + '</b>' +
-      (hasB ? ' · 배정 <b>' + plan + '안</b>' : '');
   }
 
   function showMePanel(on) {
@@ -148,9 +139,6 @@
     el('mePlan').hidden = !hasB;
     el('meBar').hidden = false;
   }
-
-  el('selG').addEventListener('change', preview);
-  el('selN').addEventListener('change', preview);
 
   /* 번호는 한 번 등록하면 본인이 바꿀 수 없다.
      잘못 등록했으면 교관이 PIN 으로 풀어 준다. */
@@ -237,7 +225,7 @@
       ? '번호 <b>' + me.g + '-' + me.n + '</b> 이(가) 미리 입력되어 있습니다. 고치지 마십시오.'
       : '첫 질문에 <b>' + me.g + '-' + me.n + '</b> 을(를) 그대로 입력하십시오.';
 
-    if (!groupOpen(me.g)) {
+    if (!groupOpen(s, me.g)) {
       return makeCard({ kind: 'eval', icon: '📝', title: s.name, badge: badge, desc: desc,
         mode: 'groupwait', tap: false, pill: '대기', pillCls: 'shut',
         msg: state.groupClosedMessage || '아직 귀 조의 평가 시간이 아닙니다. 교관 안내에 따라 주십시오.' });

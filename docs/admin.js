@@ -145,7 +145,7 @@
     el('pastBtn').hidden = on;
     el('todayBtn').hidden = !on;
     el('togglePanel').hidden = on;      // 과거 조회 중에는 개폐 조작을 감춘다
-    el('groupPanel').hidden = on;
+    el('surveyPanel').hidden = on;
     el('dateBar').classList.toggle('past', on);
     setAuto(!on);
   }
@@ -364,8 +364,8 @@
     el('updatedAt').textContent = UNIT.timeText(d.updatedAt);
     applyDateUI(d);
     el('dashTitle').textContent = (CFG.unitName || '') + ' 평가 현황';
-    renderSwitches(d);
-    renderGroupGate(d);
+    renderEvalGates(d);
+    renderSurveySwitch(d);
     renderCombined(d);
     renderTabs(d);
     renderSubject(d);
@@ -378,14 +378,7 @@
      최초 제출만 인정하므로, 남의 번호를 선점한 제출을 지워 주면
      뒤에 들어온 제출이 자동으로 승계된다. */
   function renderReset(d) {
-    var sel = el('rsSubject');
     var subs = d.subjects || [];
-    var want = sel.value;
-    var opts = ['<option value="*">전체 과목</option>'].concat(subs.map(function (s) {
-      return '<option value="' + esc(s.name) + '">' + esc(s.name) + '</option>';
-    })).join('');
-    if (sel.innerHTML !== opts) { sel.innerHTML = opts; if (want) sel.value = want; }
-
     var allPeriod = (dateParam === 'all');
     el('rsGo').disabled = allPeriod;
     el('rsNo').disabled = allPeriod;
@@ -422,34 +415,32 @@
       btn.className = 'off';
       btn.style.padding = '6px 12px';
       btn.style.fontSize = '13px';
-      btn.textContent = '초기화';
+      btn.textContent = '전부 삭제';
       btn.disabled = allPeriod;
-      btn.addEventListener('click', function () { resetNo(r.subject, r.no); });
+      btn.addEventListener('click', function () { resetNo(r.no); });
       tr.lastChild.appendChild(btn);
       tb.appendChild(tr);
     });
   }
 
-  async function resetNo(subject, no) {
-    var label = (subject === '*' ? '전체 과목' : subject) + ' / ' + no;
-    var extra = (subject === '*')
-      ? '· 번호 등록을 풀어 다시 등록할 수 있게 합니다\n· 처음 제출한 기록 한 건을 삭제합니다'
-      : '· 이 과목의 처음 제출 기록 한 건만 삭제합니다 (등록은 유지)';
-    if (!confirm(label + '\n\n' + extra + '\n\n되돌릴 수 없습니다. 진행하시겠습니까?')) return;
+  /* 번호 하나를 완전히 비운다 — 전 과목 제출 기록 + 등록 */
+  async function resetNo(no) {
+    if (!confirm(no + ' 을(를) 완전히 초기화합니다.\n\n' +
+                 '· 모든 과목의 제출 기록을 전부 삭제합니다\n' +
+                 '· 번호 등록을 풀어 다시 등록할 수 있게 합니다\n\n' +
+                 '되돌릴 수 없습니다. 진행하시겠습니까?')) return;
     el('rsGo').disabled = true;
     setMsg(el('rsMsg'), '처리 중…');
     try {
-      var r = await UNIT.api('reset', {
-        pin: pin, subject: subject, no: no, date: dateParam
-      });
+      var r = await UNIT.api('reset', { pin: pin, no: no, date: dateParam });
       var parts = [];
-      if (r.released) parts.push('등록 해제 (다시 등록 가능)');
       (r.removed || []).forEach(function (x) {
-        parts.push(x.subject + ' 제출 삭제 ' + UNIT.timeText(x.at) +
-                   (x.remaining ? ' · 남은 ' + x.remaining + '건 승계' : ''));
+        parts.push(x.subject + ' ' + x.count + '건');
       });
-      if (!parts.length) parts.push('삭제할 기록이 없었습니다');
-      setMsg(el('rsMsg'), r.no + ' 초기화 완료 — ' + parts.join(' / '), 'ok');
+      var txt = r.no + ' 초기화 완료 — ' +
+        (parts.length ? '제출 삭제: ' + parts.join(', ') : '삭제할 제출 없음') +
+        (r.released ? ' · 등록 해제 (다시 등록 가능)' : '');
+      setMsg(el('rsMsg'), txt, 'ok');
     } catch (err) {
       setMsg(el('rsMsg'), '실패: ' + err.message, 'err');
     }
@@ -462,94 +453,164 @@
     if (!/^\d{1,3}\s*-\s*\d{1,3}$/.test(no)) {
       return setMsg(el('rsMsg'), '번호를 조-번 형식으로 적으십시오. 예: 3-7', 'err');
     }
-    resetNo(el('rsSubject').value || '*', no.replace(/\s/g, ''));
+    resetNo(no.replace(/\s/g, ''));
   });
   el('rsNo').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') el('rsGo').click();
   });
 
-  /* ── 조별 개방 ───────────────────────────────────
-     구글폼은 과목 단위로만 응답을 막을 수 있어, 조 단위 통제는
-     '응시 화면에서 링크를 내주지 않는' 방식이다. 과목 자체를 닫으면
-     구글폼이 제출을 거부하므로 최종 차단은 과목 개폐로 한다. */
+  /* ── 평가 개폐 (과목별 + 조별) ────────────────────
+     구글폼은 과목 단위로만 응답을 막을 수 있다. 조 단위 통제는
+     '응시 화면에서 링크를 내주지 않는' 방식이므로, 완전 차단은
+     과목 닫기로 하고 조별 개방은 진행 순서 통제에 쓴다. */
   function planOf(g, pattern) {
     var p = String(pattern || '').toUpperCase().replace(/[^AB]/g, '');
     if (!p) return 'A';
     return p.charAt((Number(g) - 1) % p.length);
   }
 
-  function renderGroupGate(d) {
+  var gridOpen = {};        // 과목별 '조 선택' 펼침 상태
+
+  function renderEvalGates(d) {
+    var wrap = el('evalGates');
+    wrap.innerHTML = '';
+    var subs = d.subjects || [];
+    if (!subs.length) {
+      wrap.innerHTML = '<p class="empty">과목 시트에 평가 과목을 등록하십시오.</p>';
+      return;
+    }
+    subs.forEach(function (s) { wrap.appendChild(gateCard(s, d)); });
+  }
+
+  function gateCard(s, d) {
     var n = d.groupCount || 50;
+    var unlimited = (s.openGroups === null || s.openGroups === undefined);
     var openSet = {};
-    var unlimited = (d.openGroups === null || d.openGroups === undefined);
-    if (!unlimited) (d.openGroups || []).forEach(function (g) { openSet[g] = true; });
+    if (!unlimited) (s.openGroups || []).forEach(function (g) { openSet[g] = true; });
 
-    el('gNow').textContent = '현재 ' + (d.openGroupsText || '-');
-    if (document.activeElement !== el('gSpec')) el('gSpec').value = d.openGroupsText || '';
+    var box = document.createElement('div');
+    box.className = 'gate' + (s.open ? ' on' : '');
 
-    // 조별 제출 합계 (닫힌 조의 제출을 표시하는 데 쓴다)
-    var sub = {};
-    ((d.combined && d.combined.groups) || []).forEach(function (g) {
-      sub[g.group] = (g.subjects || []).reduce(function (a, x) { return a + x.submitted; }, 0);
+    // 머리말 + 과목 개폐
+    var head = document.createElement('div');
+    head.className = 'gate-head';
+    head.innerHTML = '<div><div class="name">' + esc(s.name) +
+      (s.hasB ? ' <span class="plan-badge">A/B</span>' : '') + '</div>' +
+      '<div class="state">' + (s.open ? '응답 받는 중' : '마감됨') +
+      ' · 열린 조 ' + esc(s.openGroupsText || '-') +
+      (s.formLinked ? '' : ' · <span class="warn">폼 링크 없음</span>') + '</div></div>';
+    var tbtn = document.createElement('button');
+    tbtn.textContent = s.open ? '닫기' : '열기';
+    tbtn.className = s.open ? 'off' : 'on';
+    tbtn.addEventListener('click', function () { toggle('subject', s.name, !s.open, s.name); });
+    head.appendChild(tbtn);
+    box.appendChild(head);
+
+    // 조 지정
+    var body = document.createElement('div');
+    body.className = 'gate-body';
+    var row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<label style="margin:0">열 조</label>';
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = s.openGroupsText || '';
+    input.placeholder = '1,2,7  또는  1~7';
+    row.appendChild(input);
+
+    function mk(label, cls, spec) {
+      var b = document.createElement('button');
+      b.textContent = label;
+      if (cls) b.className = cls;
+      b.addEventListener('click', function () {
+        sendGroups(s.name, spec === '__input__' ? input.value.trim() : spec);
+      });
+      return b;
+    }
+    row.appendChild(mk('적용', '', '__input__'));
+    row.appendChild(mk('전체', 'ghost', '전체'));
+    row.appendChild(mk('없음', 'ghost', '없음'));
+    row.appendChild(mk('A안 조', 'ghost', planGroups('A', n, d.planPattern)));
+    row.appendChild(mk('B안 조', 'ghost', planGroups('B', n, d.planPattern)));
+
+    var expand = document.createElement('button');
+    expand.className = 'ghost';
+    expand.textContent = gridOpen[s.name] ? '조 선택 접기' : '조 선택 펼치기';
+    row.appendChild(expand);
+    body.appendChild(row);
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') sendGroups(s.name, input.value.trim());
     });
 
-    var grid = el('gGrid');
-    grid.innerHTML = '';
+    // 1~N 격자
+    var grid = document.createElement('div');
+    grid.className = 'ggrid';
+    grid.hidden = !gridOpen[s.name];
     for (var g = 1; g <= n; g++) {
       (function (gg) {
         var isOpen = unlimited || !!openSet[gg];
         var b = document.createElement('button');
-        b.className = 'gcell' + (isOpen ? ' open' : '') +
-                      ((!isOpen && sub[String(gg)]) ? ' flag' : '');
+        b.className = 'gcell' + (isOpen ? ' open' : '');
         b.innerHTML = gg + '<span class="pl">' + planOf(gg, d.planPattern) + '안</span>';
-        b.title = gg + '조 · ' + planOf(gg, d.planPattern) + '안 · 제출 ' + (sub[String(gg)] || 0) +
-                  '건 · ' + (isOpen ? '열림' : '닫힘');
+        b.title = gg + '조 · ' + planOf(gg, d.planPattern) + '안 · ' + (isOpen ? '열림' : '닫힘');
         b.addEventListener('click', function () {
           var next = {};
           for (var k = 1; k <= n; k++) if (unlimited || openSet[k]) next[k] = true;
           if (next[gg]) delete next[gg]; else next[gg] = true;
-          sendGroups(listOf(next, n));
+          var list = [];
+          for (var k2 = 1; k2 <= n; k2++) if (next[k2]) list.push(k2);
+          sendGroups(s.name, list.length ? list.join(',') : '없음');
         });
         grid.appendChild(b);
       })(g);
     }
+    expand.addEventListener('click', function () {
+      gridOpen[s.name] = !gridOpen[s.name];
+      grid.hidden = !gridOpen[s.name];
+      expand.textContent = gridOpen[s.name] ? '조 선택 접기' : '조 선택 펼치기';
+    });
+    body.appendChild(grid);
+    box.appendChild(body);
+    return box;
   }
 
-  function listOf(set, n) {
+  function planGroups(want, n, pattern) {
     var out = [];
-    for (var g = 1; g <= n; g++) if (set[g]) out.push(g);
+    for (var g = 1; g <= n; g++) if (planOf(g, pattern) === want) out.push(g);
     return out.length ? out.join(',') : '없음';
   }
 
-  async function sendGroups(spec) {
-    document.querySelectorAll('#gGrid button, #groupPanel button')
-      .forEach(function (b) { b.disabled = true; });
-    setMsg(el('groupMsg'), '적용 중…');
+  async function sendGroups(subject, spec) {
+    if (!spec) return setMsg(el('toggleMsg'), '열 조를 입력하십시오. 예: 1,2,7 또는 1~7', 'err');
+    document.querySelectorAll('#togglePanel button').forEach(function (b) { b.disabled = true; });
+    setMsg(el('toggleMsg'), '적용 중…');
     try {
-      var r = await UNIT.api('groups', { pin: pin, groups: spec });
-      setMsg(el('groupMsg'), '개방 조: ' + r.openGroups, 'ok');
+      var r = await UNIT.api('groups', { pin: pin, subject: subject, groups: spec });
+      setMsg(el('toggleMsg'), subject + ' — 열린 조: ' + r.openGroups, 'ok');
     } catch (err) {
-      setMsg(el('groupMsg'), '실패: ' + err.message, 'err');
+      setMsg(el('toggleMsg'), '실패: ' + err.message, 'err');
     }
     await load();
-    document.querySelectorAll('#groupPanel button').forEach(function (b) { b.disabled = false; });
+    document.querySelectorAll('#togglePanel button').forEach(function (b) { b.disabled = false; });
   }
 
-  el('gAll').addEventListener('click', function () { sendGroups('전체'); });
-  el('gNone').addEventListener('click', function () { sendGroups('없음'); });
-  el('gApply').addEventListener('click', function () {
-    var v = el('gSpec').value.trim();
-    if (!v) return setMsg(el('groupMsg'), '범위를 입력하십시오. 예: 1-10,15', 'err');
-    sendGroups(v);
-  });
-  el('gA').addEventListener('click', function () { sendGroups(planGroups('A')); });
-  el('gB').addEventListener('click', function () { sendGroups(planGroups('B')); });
-
-  function planGroups(want) {
-    if (!last) return '없음';
-    var n = last.groupCount || 50, out = [];
-    for (var g = 1; g <= n; g++) if (planOf(g, last.planPattern) === want) out.push(g);
-    return out.length ? out.join(',') : '없음';
+  /* ── 설문 개폐 ───────────────────────────────── */
+  function renderSurveySwitch(d) {
+    var sv = d.survey || {};
+    var wrap = el('surveySwitch');
+    wrap.innerHTML = '';
+    var div = document.createElement('div');
+    div.className = 'switch survey';
+    div.innerHTML = '<div><div class="name">설문 (무기명)</div>' +
+      '<div class="state">' + (sv.open ? '응답 받는 중' : '마감됨') + '</div></div>';
+    var btn = document.createElement('button');
+    btn.textContent = sv.open ? '닫기' : '열기';
+    btn.className = sv.open ? 'off' : 'on';
+    btn.addEventListener('click', function () { toggle('survey', '', !sv.open, '설문'); });
+    div.appendChild(btn);
+    wrap.appendChild(div);
   }
 
   /* ── 배정과 다른 안으로 응시한 경우 ──────────────── */
@@ -571,37 +632,6 @@
                      '<td>' + UNIT.timeText(r.at) + '</td>';
       tb.appendChild(tr);
     });
-  }
-
-  function renderSwitches(d) {
-    var wrap = el('switches');
-    wrap.innerHTML = '';
-    (d.subjects || []).forEach(function (s) {
-      wrap.appendChild(switchCard(s.name, s.open, s.name + ' 평가', function () {
-        toggle('subject', s.name, !s.open, s.name);
-      }, s.formLinked ? '' : '폼 링크 없음'));
-    });
-    var sv = d.survey || {};
-    var card = switchCard('설문', sv.open, '설문(무기명)', function () {
-      toggle('survey', '', !sv.open, '설문');
-    }, '');
-    card.classList.add('survey');
-    wrap.appendChild(card);
-  }
-
-  function switchCard(name, open, label, onClick, note) {
-    var div = document.createElement('div');
-    div.className = 'switch';
-    div.innerHTML =
-      '<div><div class="name">' + esc(name) + '</div>' +
-      '<div class="state">' + (open ? '응답 받는 중' : '마감됨') +
-      (note ? ' · <span class="warn">' + esc(note) + '</span>' : '') + '</div></div>';
-    var btn = document.createElement('button');
-    btn.textContent = open ? '닫기' : '열기';
-    btn.className = open ? 'off' : 'on';
-    btn.addEventListener('click', onClick);
-    div.appendChild(btn);
-    return div;
   }
 
   function renderCombined(d) {
@@ -749,22 +779,21 @@
   async function toggle(target, name, open, label) {
     var what = target === 'subjects' ? '평가 전체' : label;
     if (!confirm(what + '을(를) ' + (open ? '엽니다' : '닫습니다') + '. 진행하시겠습니까?')) return;
-    document.querySelectorAll('#switches button, #allOpenBtn, #allCloseBtn')
+    var box = (target === 'survey') ? 'surveyToggleMsg' : 'toggleMsg';
+    document.querySelectorAll('#togglePanel button, #surveyPanel button')
       .forEach(function (b) { b.disabled = true; });
-    setMsg(el('toggleMsg'), '처리 중…');
+    setMsg(el(box), '처리 중…');
     try {
       var res = await UNIT.api('toggle', {
         pin: pin, target: target, name: name || '', open: open ? '1' : '0'
       });
       var done = what + '을(를) ' + (open ? '열었습니다.' : '닫았습니다.');
-      setMsg(el('toggleMsg'), res && res.warning ? done + ' (' + res.warning + ')' : done, 'ok');
+      setMsg(el(box), res && res.warning ? done + ' (' + res.warning + ')' : done, 'ok');
     } catch (err) {
-      setMsg(el('toggleMsg'), '실패: ' + err.message, 'err');
+      setMsg(el(box), '실패: ' + err.message, 'err');
     }
     await load();
   }
-  el('allOpenBtn').addEventListener('click', function () { toggle('subjects', '', true, '평가 전체'); });
-  el('allCloseBtn').addEventListener('click', function () { toggle('subjects', '', false, '평가 전체'); });
 
   /* ── CSV 저장 ────────────────────────────────────── */
   el('csvBtn').addEventListener('click', function () {
