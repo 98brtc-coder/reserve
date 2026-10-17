@@ -552,6 +552,11 @@
   var gridOpen = {};        // 과목별 '조 선택' 펼침 상태
 
   function renderEvalGates(d) {
+    el('autoCloseNote').textContent = d.autoCloseHour
+      ? '자동 마감 매일 ' + d.autoCloseHour + '시경' +
+        (d.lastAutoClose ? ' · 최근 실행 ' + d.lastAutoClose : ' · 아직 실행 안 됨')
+      : '자동 마감 꺼짐 — 시트 메뉴에서 켜 두면 하루가 끝날 때 전부 닫힙니다.';
+
     var wrap = el('evalGates');
     wrap.innerHTML = '';
     var subs = d.subjects || [];
