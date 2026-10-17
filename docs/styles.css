@@ -447,3 +447,18 @@ input[type=date] { width: auto; min-width: 150px; }
 .mxname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .mxcell.full .mxname { color: var(--text); }
 .chip.miss { background: rgba(179, 38, 30, .12); color: var(--danger); font-weight: 700; }
+
+/* ── 번호 조회 / 정리 ───────────────────────────── */
+.rsbox {
+  margin-top: 14px; padding: 14px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
+}
+.rsline { font-size: 14px; margin-bottom: 12px; }
+.rschk { display: flex; gap: 9px; align-items: flex-start; font-weight: 400; font-size: 13px; margin: 0 0 4px; }
+.rschk input { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; }
+.rssubs { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.rssub { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; padding: 6px 0; }
+.rssub input { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; }
+.rssub.none { opacity: .55; }
+.rssub .nm { font-weight: 700; min-width: 7.5em; }
+.rssub .st { color: var(--muted); }

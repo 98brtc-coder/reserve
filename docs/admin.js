@@ -390,8 +390,10 @@
   function renderReset(d) {
     var subs = d.subjects || [];
     var allPeriod = (dateParam === 'all');
-    el('rsGo').disabled = allPeriod;
+    el('rsFind').disabled = allPeriod;
+    el('rsApply').disabled = allPeriod;
     el('rsNo').disabled = allPeriod;
+    if (allPeriod) el('rsResult').hidden = true;
     if (allPeriod) {
       setMsg(el('rsMsg'), '전체 기간에서는 초기화할 수 없습니다. 날짜를 먼저 고르십시오.', 'err');
     } else if (el('rsMsg').className.indexOf('err') === -1) {
@@ -422,51 +424,119 @@
                      '<td class="num">' + r.count + '회</td>' +
                      '<td>' + UNIT.timeText(r.keptAt) + '</td><td></td>';
       var btn = document.createElement('button');
-      btn.className = 'off';
+      btn.className = 'ghost';
       btn.style.padding = '6px 12px';
       btn.style.fontSize = '13px';
-      btn.textContent = '전부 삭제';
+      btn.textContent = '조회';
       btn.disabled = allPeriod;
-      btn.addEventListener('click', function () { resetNo(r.no); });
+      btn.addEventListener('click', function () {
+        el('rsNo').value = r.no;
+        lookupNo(r.no);
+      });
       tr.lastChild.appendChild(btn);
       tb.appendChild(tr);
     });
   }
 
-  /* 번호 하나를 완전히 비운다 — 전 과목 제출 기록 + 등록 */
-  async function resetNo(no) {
-    if (!confirm(no + ' 을(를) 완전히 초기화합니다.\n\n' +
-                 '· 모든 과목의 제출 기록을 전부 삭제합니다\n' +
-                 '· 번호 등록을 풀어 다시 등록할 수 있게 합니다\n\n' +
-                 '되돌릴 수 없습니다. 진행하시겠습니까?')) return;
-    el('rsGo').disabled = true;
+  /* ── 번호 조회 / 선택 정리 ────────────────────────
+     재접속이 끊긴 사람은 '등록 해제'만 하면 점수를 지키면서 다시 등록할 수 있다.
+     특정 과목을 잘못 냈을 때만 그 과목을 골라 지운다. */
+  var rsData = null;
+
+  async function lookupNo(no) {
+    setMsg(el('rsMsg'), '조회 중…');
+    el('rsFind').disabled = true;
+    el('rsResult').hidden = true;
+    try {
+      rsData = await UNIT.api('lookup', { pin: pin, no: no, date: dateParam });
+      renderLookup(rsData);
+      setMsg(el('rsMsg'), '');
+    } catch (err) {
+      rsData = null;
+      setMsg(el('rsMsg'), err.message, 'err');
+    }
+    el('rsFind').disabled = false;
+  }
+
+  function renderLookup(d) {
+    el('rsClaimLine').innerHTML = '<b>' + esc(d.no) + '</b>' +
+      (d.plan ? ' <span class="plan-badge">' + esc(d.plan) + '안</span>' : '') + ' · ' +
+      (d.claimed ? '등록됨 (' + UNIT.timeText(d.claimedAt) + ')'
+                 : '<span class="warn">등록 안 됨</span>');
+
+    el('rsRelease').checked = !!d.claimed;
+    el('rsRelease').disabled = !d.claimed;
+
+    el('rsSubjects').innerHTML = (d.subjects || []).map(function (s, i) {
+      var has = s.count > 0;
+      var st = has
+        ? ('제출 ' + UNIT.timeText(s.at) + ' · ' +
+           (s.score === null ? '점수 없음' : UNIT.fmt(s.score, 1) + '점') +
+           (s.plan ? ' · ' + esc(s.plan) + '안' : '') +
+           (s.count > 1 ? ' · <span class="warn">' + s.count + '건 중복</span>' : ''))
+        : '미제출';
+      return '<label class="rssub' + (has ? '' : ' none') + '">' +
+        '<input type="checkbox" data-subject="' + esc(s.name) + '"' + (has ? '' : ' disabled') + '>' +
+        '<span class="nm">' + esc(s.name) + '</span>' +
+        '<span class="st">' + st + (has ? ' — 체크하면 삭제' : '') + '</span></label>';
+    }).join('');
+
+    // 서버에 아무 기록이 없으면 여기서 지울 게 없다 — 다음 조치를 알려 준다
+    var nothing = !d.claimed && (d.subjects || []).every(function (s) { return !s.count; });
+    setMsg(el('rsMsg'), nothing
+      ? '서버에 등록·제출 기록이 없는 번호입니다. 그 예비군의 폰에만 번호가 남아 있는 경우이니, ' +
+        '폰에서 번호 옆 자물쇠(🔒)를 누르고 관리자 PIN 을 입력해 다시 고르게 하십시오.'
+      : '');
+
+    el('rsResult').hidden = false;
+  }
+
+  async function applyReset() {
+    if (!rsData) return;
+    var release = el('rsRelease').checked;
+    var picks = [];
+    Array.prototype.forEach.call(el('rsSubjects').querySelectorAll('input[type=checkbox]'),
+      function (c) { if (c.checked) picks.push(c.getAttribute('data-subject')); });
+
+    if (!release && !picks.length) {
+      return setMsg(el('rsMsg'), '무엇을 정리할지 하나 이상 고르십시오.', 'err');
+    }
+    var what = [];
+    if (release) what.push('· 번호 등록 해제 (다시 등록 가능)');
+    picks.forEach(function (n) { what.push('· ' + n + ' 제출 기록 삭제'); });
+    if (!confirm(rsData.no + '\n\n' + what.join('\n') +
+                 '\n\n고르지 않은 과목의 점수는 그대로 둡니다.\n되돌릴 수 없습니다. 진행하시겠습니까?')) return;
+
+    el('rsApply').disabled = true;
     setMsg(el('rsMsg'), '처리 중…');
     try {
-      var r = await UNIT.api('reset', { pin: pin, no: no, date: dateParam });
-      var parts = [];
-      (r.removed || []).forEach(function (x) {
-        parts.push(x.subject + ' ' + x.count + '건');
+      var r = await UNIT.api('reset', {
+        pin: pin, no: rsData.no, date: dateParam,
+        release: release ? '1' : '0', subjects: picks.join(',')
       });
-      var txt = r.no + ' 초기화 완료 — ' +
-        (parts.length ? '제출 삭제: ' + parts.join(', ') : '삭제할 제출 없음') +
-        (r.released ? ' · 등록 해제 (다시 등록 가능)' : '');
-      setMsg(el('rsMsg'), txt, 'ok');
+      var parts = [];
+      if (r.released) parts.push('등록 해제');
+      (r.removed || []).forEach(function (x) { parts.push(x.subject + ' ' + x.count + '건 삭제'); });
+      setMsg(el('rsMsg'), r.no + ' 정리 완료 — ' + (parts.join(' / ') || '변경 없음'), 'ok');
     } catch (err) {
       setMsg(el('rsMsg'), '실패: ' + err.message, 'err');
     }
-    el('rsGo').disabled = false;
+    el('rsApply').disabled = false;
     await load();
+    if (rsData) await lookupNo(rsData.no);
   }
 
-  el('rsGo').addEventListener('click', function () {
+  function askLookup() {
     var no = el('rsNo').value.trim();
     if (!/^\d{1,3}\s*-\s*\d{1,3}$/.test(no)) {
       return setMsg(el('rsMsg'), '번호를 조-번 형식으로 적으십시오. 예: 3-7', 'err');
     }
-    resetNo(no.replace(/\s/g, ''));
-  });
+    lookupNo(no.replace(/\s/g, ''));
+  }
+  el('rsFind').addEventListener('click', askLookup);
+  el('rsApply').addEventListener('click', applyReset);
   el('rsNo').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') el('rsGo').click();
+    if (e.key === 'Enter') askLookup();
   });
 
   /* ── 평가 개폐 (과목별 + 조별) ────────────────────

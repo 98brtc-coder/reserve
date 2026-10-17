@@ -6,8 +6,8 @@
 <title>관리자 · 평가 현황</title>
 <meta name="theme-color" content="#16243a">
 <meta name="robots" content="noindex, nofollow">
-<link rel="stylesheet" href="styles.css?v=18">
-<script src="config.js?v=18"></script>
+<link rel="stylesheet" href="styles.css?v=20">
+<script src="config.js?v=20"></script>
 </head>
 <body>
 <main class="wrap wide">
@@ -124,10 +124,10 @@
       </div>
 
       <div class="panel" id="resetPanel">
-        <h2>번호 초기화 <span class="hint">중복 제출은 처음 제출한 것만 인정됩니다</span></h2>
+        <h2>번호 조회 / 정리 <span class="hint">재접속 사고 · 오입력 복구</span></h2>
         <p class="msg" style="color:var(--muted)">
-          "누가 제 번호를 쓰고 있는데요?" 라고 하면 그 번호를 적고 <b>초기화</b>를 누르십시오.
-          <b>그 번호의 모든 제출 기록(전 과목)과 등록이 한꺼번에 삭제</b>되어, 본인이 바로 다시 등록·응시할 수 있습니다.
+          번호를 적고 <b>조회</b>하면 등록 여부와 과목별 제출 상태가 나옵니다.
+          그 다음 <b>무엇을 정리할지 골라서</b> 적용하십시오. 고르지 않은 과목의 점수는 그대로 보존됩니다.
         </p>
         <div class="row" style="margin-bottom:12px">
           <span class="meta" id="claimStat">등록 -</span>
@@ -141,7 +141,22 @@
         <div class="row" style="margin-top:14px">
           <label for="rsNo" style="margin:0">번호</label>
           <input type="text" id="rsNo" placeholder="3-7" inputmode="numeric" style="max-width:120px">
-          <button id="rsGo" class="off">전부 삭제</button>
+          <button id="rsFind">조회</button>
+        </div>
+
+        <div id="rsResult" hidden>
+          <div class="rsbox">
+            <div class="rsline" id="rsClaimLine"></div>
+            <label class="rschk">
+              <input type="checkbox" id="rsRelease">
+              <span><b>번호 등록 해제</b> — 본인이 다시 등록할 수 있게 합니다 (점수는 유지)</span>
+            </label>
+            <div class="rssubs" id="rsSubjects"></div>
+            <div class="row" style="margin-top:14px">
+              <button id="rsApply" class="off">선택한 것만 정리</button>
+              <span class="meta">고르지 않은 것은 손대지 않습니다</span>
+            </div>
+          </div>
         </div>
         <p id="rsMsg" class="msg"></p>
 
@@ -204,7 +219,7 @@
   </section>
 
 </main>
-<script src="common.js?v=18"></script>
-<script src="admin.js?v=18"></script>
+<script src="common.js?v=20"></script>
+<script src="admin.js?v=20"></script>
 </body>
 </html>

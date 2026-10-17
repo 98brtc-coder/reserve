@@ -35,6 +35,14 @@
     } catch (e) { return null; }
   }
 
+  /* 폰에 저장한 번호는 '그 날' 것만 유효하다.
+     서버 등록(claim)이 날짜별이므로 폰도 같은 기준을 써야
+     다음 회차에 지난번 번호가 남아 교관이 일일이 풀어 주는 일이 없다. */
+  function todayLocal() {
+    var d = new Date(), p = function (x) { return String(x).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
   /* 기기를 구분하는 값. 같은 폰에서 새로고침해도 본인 등록은 유지된다. */
   function deviceToken() {
     var t = pick(DEV_KEY);
@@ -162,7 +170,7 @@
           return;
         }
       }
-      me = { g: g, n: n };
+      me = { g: g, n: n, d: todayLocal() };
       store(ME_KEY, { at: Date.now(), v: me });
       showMePanel(false);
       applyMe();
@@ -303,8 +311,10 @@
   });
 
   me = pick(ME_KEY);
+  if (me && me.d !== todayLocal()) me = null;   // 지난 회차 번호는 쓰지 않는다
   if (q.g && /^\d+$/.test(q.g)) {
-    me = { g: Number(q.g), n: (q.n && /^\d+$/.test(q.n)) ? Number(q.n) : (me ? me.n : 0) };
+    me = { g: Number(q.g), d: todayLocal(),
+           n: (q.n && /^\d+$/.test(q.n)) ? Number(q.n) : (me ? me.n : 0) };
     if (!me.n) me = null;                 // 번은 직접 골라야 한다
     else store(ME_KEY, { at: Date.now(), v: me });
   }
