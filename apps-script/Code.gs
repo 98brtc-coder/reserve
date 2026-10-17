@@ -155,6 +155,7 @@ function onOpen() {
     .addItem('설문 닫기', 'menuSurveyClose')
     .addSeparator()
     .addItem('문제 순서 섞기 켜기', 'menuShuffleOn')
+    .addItem('자동입력 점검 / 복구', 'menuCheckPrefill')
     .addItem('응답 시트 다시 찾기', 'menuRefindSheets')
     .addItem('링크 캐시 비우기', 'menuClearLinks')
     .addItem('종합 순위 보기', 'menuSummary')
@@ -190,6 +191,41 @@ function menuShuffleOn() {
   });
   SpreadsheetApp.getUi().alert('문제 순서 섞기',
     '적용: ' + (done.join(', ') || '없음') + (failed.length ? '\n\n실패:\n' + failed.join('\n') : ''),
+    SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+/**
+ * 번호 자동입력 링크를 폼에서 다시 만들어 과목 시트에 적는다.
+ * 폼의 번호 질문을 지우고 다시 만들면 entry 아이디가 바뀌어
+ * 캐시된 링크가 낡게 되는데, 그러면 번호가 채워지지 않는다.
+ * 폼을 고친 뒤에는 이 메뉴를 한 번 실행하십시오.
+ */
+function menuCheckPrefill() {
+  var cfg = readConfig_();
+  var lines = [], bad = 0;
+  subjects_(cfg).forEach(function (s) {
+    ['A', 'B'].forEach(function (k) {
+      var v = s[k];
+      if (!v.editLink) return;
+      var label = s.name + (s.hasB ? ' ' + k + '안' : '');
+      try {
+        var info = prefillInfo_(openForm_(v.editLink, label));
+        if (!info.url) { bad++; lines.push('✗ ' + label + ' — 단답형 번호 질문을 찾지 못했습니다'); return; }
+        setSubjectCell_(s, v.cols.prefill, info.url);
+        var eid = (info.url.match(/entry\.(\d+)/) || [])[1] || '?';
+        var warn = /번호/.test(info.title) ? '' : '  ⚠ 제목에 "번호"가 없습니다 — 다른 질문을 잡았을 수 있습니다';
+        lines.push('✓ ' + label + ' → "' + info.title + '" (entry.' + eid + ')' + warn);
+      } catch (err) {
+        bad++;
+        lines.push('✗ ' + label + ' — ' + ((err && err.message) ? err.message : err));
+      }
+    });
+  });
+  CacheService.getScriptCache().remove(STATE_CACHE_KEY);
+  SpreadsheetApp.getUi().alert('자동입력 점검 / 복구',
+    (lines.join('\n') || '등록된 평가 폼이 없습니다.') +
+    '\n\n' + (bad ? bad + '개 폼에 문제가 있습니다. 번호 질문이 "단답형"인지 확인하십시오.'
+                   : '모든 폼의 자동입력 링크를 새로 만들었습니다.'),
     SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
@@ -244,7 +280,7 @@ function menuSummary() {
     .sort(function (a, b) { return (b.overall === null ? -1 : b.overall) - (a.overall === null ? -1 : a.overall); })
     .forEach(function (g, i) {
       lines.push((i + 1) + '위  ' + g.group + '조(' + g.plan + '안)   종합 ' +
-                 (g.overall === null ? '-' : g.overall + '%') + (g.complete ? '' : '  (미완)'));
+                 (g.overall === null ? '-' : g.overall + '점') + (g.complete ? '' : '  (미완)'));
     });
   if (d.combined.missingMax.length) {
     lines.push('', '※ 만점 미설정으로 종합에서 제외된 과목: ' + d.combined.missingMax.join(', '));
@@ -282,14 +318,17 @@ function handle_(p) {
     if (action === 'ping') return json_({ ok: true, data: { auth: true } });
     if (action === 'dashboard') return json_({ ok: true, data: dashboard_(cfg, resolveDay_(p.date)) });
     if (action === 'survey') return json_({ ok: true, data: cachedSurvey_(cfg, resolveDay_(p.date)) });
+    if (action === 'lookup') {
+      return json_({ ok: true, data: lookupNumber_(cfg, String(p.no || ''), resolveDay_(p.date)) });
+    }
     if (action === 'toggle' || action === 'groups' || action === 'reset') {
       var lock = LockService.getScriptLock();
       lock.waitLock(20000);
       try {
         if (action === 'groups') return json_({ ok: true, data: setOpenGroups_(cfg, p.subject, p.groups) });
         if (action === 'reset') {
-          return json_({ ok: true,
-            data: resetNumber_(cfg, String(p.subject || ''), String(p.no || ''), resolveDay_(p.date)) });
+          return json_({ ok: true, data: resetNumber_(cfg, String(p.no || ''), resolveDay_(p.date),
+            truthy_(p.release), String(p.subjects === undefined ? '' : p.subjects)) });
         }
         return json_({ ok: true, data: toggleAny_(cfg, String(p.target || ''), p.name, truthy_(p.open)) });
       } finally { lock.releaseLock(); }
@@ -619,22 +658,30 @@ function ensureVariantLinks_(s, which) {
   return out;
 }
 
-/** 번호 질문이 __NO__ 로 미리 채워진 링크를 만든다. 화면에서 실제 번호로 치환한다. */
-function prefillTemplate_(form) {
+/**
+ * 번호 질문이 __NO__ 로 미리 채워진 링크를 만든다. 화면에서 실제 번호로 치환한다.
+ * {url, title} 을 돌려준다(점검 메뉴에서 어느 질문을 잡았는지 보여 주기 위함).
+ */
+function prefillInfo_(form) {
   var items;
   try { items = form.getItems(FormApp.ItemType.TEXT); } catch (e) { items = []; }
-  if (!items || !items.length) return '';
+  if (!items || !items.length) return { url: '', title: '' };
   var target = null;
   for (var i = 0; i < items.length; i++) {
     if (/번호/.test(String(items[i].getTitle() || ''))) { target = items[i]; break; }
   }
   if (!target) target = items[0];
   try {
-    return form.createResponse()
-      .withItemResponse(target.asTextItem().createResponse('__NO__'))
-      .toPrefilledUrl();
-  } catch (e) { return ''; }
+    return {
+      url: form.createResponse()
+        .withItemResponse(target.asTextItem().createResponse('__NO__'))
+        .toPrefilledUrl(),
+      title: String(target.getTitle() || '')
+    };
+  } catch (e) { return { url: '', title: '' }; }
 }
+
+function prefillTemplate_(form) { return prefillInfo_(form).url; }
 
 function surveyViewUrl_(cfg) {
   var cached = String(cfg['설문폼_응시링크'] || '').trim();
@@ -1001,14 +1048,14 @@ function pickFirst_(out) {
   });
 }
 
-function aggregateSubject_(ss, cfg, subj, roster, day, dateSet, used) {
+function aggregateSubject_(ss, cfg, subj, roster, day, dateSet, used, regByGroup) {
   var pattern = cfg['안배정'] === undefined ? 'ABBA' : cfg['안배정'];
   var base = {
     name: subj.name, open: subj.open, hasB: !!subj.hasB,
     formLinked: !!(subj.A.editLink || subj.B.editLink),
     maxScore: subj.maxScore, sheets: {}, warning: '',
-    totals: { expected: 0, submitted: 0, average: null },
-    groups: [], unknown: [], wrongPlan: [], dupes: [], duplicates: 0
+    totals: { expected: 0, registered: 0, missing: 0, submitted: 0, average: null },
+    groups: [], unknown: [], wrongPlan: [], dupes: [], missing: [], duplicates: 0
   };
 
   var out = { all: {}, first: {}, unknown: [], duplicates: 0,
@@ -1083,10 +1130,21 @@ function aggregateSubject_(ss, cfg, subj, roster, day, dateSet, used) {
       var scored = members.filter(function (m) { return m.score !== null; });
       var avg = scored.length
         ? scored.reduce(function (a, m) { return a + m.score; }, 0) / scored.length : null;
+
+      // 오늘 번호를 등록한 사람 기준으로 미제출자를 뽑는다(정원이 아니라 실제 입소 인원)
+      var reg = (regByGroup && regByGroup[g]) ? regByGroup[g].slice() : [];
+      var done = {};
+      members.forEach(function (m) { done[m.n] = true; });
+      var missing = reg.filter(function (n) { return !done[n]; });
+
       return {
         group: g, plan: planFor_(g, pattern),
         slots: slots, expected: slots.length, submitted: members.length,
+        registered: reg.length,
+        regSlots: reg,
+        missing: missing,
         average: round_(avg, 2),
+        avgRaw: avg,                      // 순위 계산은 반올림 전 값으로 한다
         members: members.map(function (m) {
           return { no: m.no, n: m.n, score: m.score, at: m.at, plan: m.plan,
                    count: m.count || 1 };
@@ -1096,8 +1154,14 @@ function aggregateSubject_(ss, cfg, subj, roster, day, dateSet, used) {
 
   var allScored = Object.keys(out.first).map(function (k) { return out.first[k]; })
     .filter(function (m) { return m.score !== null; });
+  base.missing = [];
+  base.groups.forEach(function (g) {
+    g.missing.forEach(function (n) { base.missing.push(g.group + '-' + n); });
+  });
   base.totals = {
     expected: base.groups.reduce(function (a, g) { return a + g.expected; }, 0),
+    registered: base.groups.reduce(function (a, g) { return a + g.registered; }, 0),
+    missing: base.missing.length,
     submitted: Object.keys(out.first).length,
     average: allScored.length
       ? round_(allScored.reduce(function (a, m) { return a + m.score; }, 0) / allScored.length, 2)
@@ -1116,7 +1180,8 @@ function emptyGroups_(roster, pattern) {
       return {
         group: g, plan: planFor_(g, pattern),
         slots: roster[g].slice(), expected: roster[g].length,
-        submitted: 0, average: null, members: []
+        registered: 0, regSlots: [], missing: [],
+        submitted: 0, average: null, avgRaw: null, members: []
       };
     });
 }
@@ -1144,22 +1209,34 @@ function combine_(perSubject, roster, pattern) {
   var groups = Object.keys(names).sort(function (a, b) { return Number(a) - Number(b); })
     .map(function (g) {
       var expected = roster[g] ? roster[g].length : 0;
+      var raw = [];
       var detail = perSubject.map(function (s) {
         var grp = null;
         (s.groups || []).forEach(function (x) { if (x.group === g) grp = x; });
-        var avg = grp ? grp.average : null;
-        var rate = (avg !== null && s.maxScore) ? round_((avg / s.maxScore) * 100, 1) : null;
+        // 반올림 전 평균으로 득점률을 내고, 표시용으로만 반올림한다
+        var exact = grp ? (grp.avgRaw === undefined ? grp.average : grp.avgRaw) : null;
+        var rateExact = (exact !== null && exact !== undefined && s.maxScore)
+          ? (exact / s.maxScore) * 100 : null;
+        if (rateExact !== null) raw.push(rateExact);
         return {
-          name: s.name, average: avg, rate: rate,
+          name: s.name,
+          average: grp ? grp.average : null,
+          rate: round_(rateExact, 1),
           submitted: grp ? grp.submitted : 0,
           expected: grp ? grp.expected : expected
         };
       });
-      var rates = detail.map(function (d) { return d.rate; })
-        .filter(function (r) { return r !== null; });
-      var overall = rates.length
-        ? round_(rates.reduce(function (a, b) { return a + b; }, 0) / rates.length, 1) : null;
-      var complete = expected > 0 && detail.every(function (d) { return d.submitted >= expected; });
+      // 응시하지 않은 과목은 평균에서 제외한다 (안 본 것이 불이익이 되지 않도록)
+      var overall = raw.length
+        ? round_(raw.reduce(function (a, b) { return a + b; }, 0) / raw.length, 1) : null;
+      // 등록 기록이 있으면 '등록자 전원 제출'을 완료 기준으로 쓴다
+      // (입소 인원이 매번 달라지므로 정원보다 등록이 정확하다)
+      var regN = 0;
+      perSubject.forEach(function (s) {
+        (s.groups || []).forEach(function (x) { if (x.group === g) regN = Math.max(regN, x.registered || 0); });
+      });
+      var need = regN > 0 ? regN : expected;
+      var complete = need > 0 && detail.every(function (d) { return d.submitted >= need; });
       return { group: g, plan: planFor_(g, pattern), expected: expected,
                subjects: detail, overall: overall, complete: complete };
     });
@@ -1172,9 +1249,22 @@ function dashboard_(cfg, day) {
   var roster = buildRoster_(ss, cfg);
   var subs = subjects_(cfg);
   var pattern = cfg['안배정'] === undefined ? 'ABBA' : cfg['안배정'];
+  // 오늘 등록(선점)된 번호를 조별로 모아 둔다 — 미제출자 판정의 기준
+  var claims = readClaims_(day);
+  var regByGroup = {};
+  Object.keys(claims).forEach(function (no) {
+    var p = parseNo_(no);
+    if (!p) return;
+    if (!regByGroup[p.g]) regByGroup[p.g] = [];
+    regByGroup[p.g].push(p.n);
+  });
+  Object.keys(regByGroup).forEach(function (g) {
+    regByGroup[g].sort(function (a, b) { return a - b; });
+  });
+
   var dateSet = {}, used = {};
   var perSubject = subs.map(function (s) {
-    return aggregateSubject_(ss, cfg, s, roster, day, dateSet, used);
+    return aggregateSubject_(ss, cfg, s, roster, day, dateSet, used, regByGroup);
   });
 
   var maxG = parseInt(cfg['조개수'], 10) || 50;
@@ -1185,7 +1275,6 @@ function dashboard_(cfg, day) {
   });
 
   // 등록은 했지만 아직 아무 과목도 제출하지 않은 번호
-  var claims = readClaims_(day);
   var submitted = {};
   perSubject.forEach(function (s) {
     (s.groups || []).forEach(function (g) {
@@ -1481,50 +1570,142 @@ function releaseClaim_(no, day) {
  *  번호 초기화 (교관용)
  * =================================================================== */
 
-/**
- * 어떤 번호의 "현재 인정된(가장 먼저 들어온)" 제출 한 건을 응답 시트에서 지운다.
- * 뒤에 같은 번호로 들어온 제출이 있으면 그것이 자동으로 승계된다.
- * 없으면 그 번호가 비어 다시 응시할 수 있다.
- */
-function resetNumber_(cfg, subjectName, no, day) {
-  if (!day) {
-    throw new Error('기준일을 먼저 고르십시오. "전체 기간"에서는 실수로 과거 기록까지 지울 수 있어 막아 두었습니다.');
+/** 번호가 일치하는 행들을 찾아 돌려준다(삭제하지 않음). */
+function findNumberRows_(sh, cfg, p, day, plan) {
+  var values = sh.getLastRow() > 1 ? sh.getDataRange().getValues() : [];
+  if (values.length < 2) return [];
+  var header = values[0].map(function (h) { return String(h); });
+  var rows = values.slice(1);
+  var noIdx = findNoColumn_(header, cfg['번호열']);
+  var score = findScoreColumns_(header, rows, noIdx, cfg['점수열']);
+  var tsIdx = -1;
+  for (var h = 0; h < header.length; h++) { if (isTimestampHeader_(header[h])) { tsIdx = h; break; } }
+  var avgMode = String(cfg['점수계산'] || '합계').trim() === '평균';
+
+  var out = [];
+  for (var r = 1; r < values.length; r++) {
+    var q = parseNo_(values[r][noIdx]);
+    if (!q || q.g !== p.g || q.n !== p.n) continue;
+    var at = (tsIdx >= 0 && values[r][tsIdx]) ? new Date(values[r][tsIdx]) : null;
+    if (day && dayKey_(at) !== day) continue;
+    var vals = [];
+    score.idxs.forEach(function (i) {
+      var v = toNumber_(values[r][i]);
+      if (v !== null) vals.push(v);
+    });
+    var sc = null;
+    if (vals.length) {
+      if (score.mode === 'quiz') sc = vals[0];
+      else {
+        var sum = vals.reduce(function (a, b) { return a + b; }, 0);
+        sc = avgMode ? sum / vals.length : sum;
+      }
+    }
+    out.push({ row: r + 1, at: at ? at.toISOString() : null, score: sc, plan: plan });
   }
+  out.sort(function (a, b) {
+    var ta = a.at ? Date.parse(a.at) : Infinity, tb = b.at ? Date.parse(b.at) : Infinity;
+    return ta - tb;
+  });
+  return out;
+}
+
+/**
+ * 번호 하나의 현재 상태를 보여 준다.
+ * 교관이 "등록만 풀지 / 어느 과목 기록까지 지울지" 를 보고 판단하게 한다.
+ */
+function lookupNumber_(cfg, no, day) {
   var p = parseNo_(no);
   if (!p) throw new Error('번호 형식이 올바르지 않습니다: ' + no + ' (예: 3-7)');
+  if (!day) throw new Error('기준일을 먼저 고르십시오. "전체 기간"에서는 조회·삭제할 수 없습니다.');
 
+  var key = p.g + '-' + p.n;
+  var claim = readClaims_(day)[key];
   var ss = SpreadsheetApp.getActive();
-  var want = String(subjectName || '').trim();
-  var subs = subjects_(cfg).filter(function (s) {
-    return !want || want === '*' || s.name === want;
-  });
-  if (!subs.length) throw new Error('과목을 찾을 수 없습니다: ' + subjectName);
+  var out = {
+    no: key, date: day,
+    claimed: !!claim, claimedAt: claim ? claim.at : null,
+    plan: planFor_(p.g, cfg['안배정'] === undefined ? 'ABBA' : cfg['안배정']),
+    subjects: []
+  };
 
-  var no = p.g + '-' + p.n;
-  var removed = [];
-  subs.forEach(function (s) {
+  subjects_(cfg).forEach(function (s) {
     var variants = s.hasB ? ['A', 'B'] : ['A'];
+    var rows = [];
     variants.forEach(function (k) {
       var sh = findVariantSheet_(ss, s, k, variants.length);
       if (!sh) return;
-      var cnt = deleteAllRows_(sh, cfg, p, day);
-      if (cnt) {
-        removed.push({ subject: s.name + (s.hasB ? ' ' + k + '안' : ''),
-                       sheet: sh.getName(), count: cnt });
-      }
+      rows = rows.concat(findNumberRows_(sh, cfg, p, day, k));
+    });
+    rows.sort(function (a, b) {
+      var ta = a.at ? Date.parse(a.at) : Infinity, tb = b.at ? Date.parse(b.at) : Infinity;
+      return ta - tb;
+    });
+    out.subjects.push({
+      name: s.name,
+      maxScore: s.maxScore,
+      count: rows.length,
+      at: rows.length ? rows[0].at : null,
+      score: rows.length ? rows[0].score : null,
+      plan: rows.length ? rows[0].plan : ''
     });
   });
+  return out;
+}
 
-  // 등록(선점)도 함께 풀어 준다 → 본인이 다시 등록할 수 있다
-  var released = releaseClaim_(no, day);
+/**
+ * 교관이 고른 범위만 정리한다.
+ *   release = true          → 번호 등록을 풀어 다시 등록할 수 있게 한다
+ *   subjectList = '안보교육' → 그 과목의 제출 기록만 지운다 (나머지 점수는 보존)
+ * 둘 다 선택하지 않으면 아무것도 하지 않는다.
+ */
+function resetNumber_(cfg, no, day, release, subjectList) {
+  var p = parseNo_(no);
+  if (!p) throw new Error('번호 형식이 올바르지 않습니다: ' + no + ' (예: 3-7)');
+  if (!day) throw new Error('기준일을 먼저 고르십시오. "전체 기간"에서는 삭제할 수 없습니다.');
 
-  CacheService.getScriptCache().remove(STATE_CACHE_KEY);
-  if (!removed.length && !released) {
-    throw new Error(no + ' 의 서버 기록이 ' + day + ' 안에 없습니다. 지울 것이 없습니다.\n' +
-      '그 예비군의 폰에만 번호가 남아 있는 경우이니, 폰에서 번호 옆 자물쇠(🔒)를 누르고 ' +
-      '관리자 PIN 을 입력해 번호를 다시 고르게 하십시오.');
+  var want = {};
+  var names = String(subjectList || '').split(',')
+    .map(function (x) { return x.trim(); })
+    .filter(function (x) { return x; });
+  names.forEach(function (n) { want[n] = true; });
+  if (!release && !names.length) {
+    throw new Error('무엇을 정리할지 하나도 고르지 않았습니다.');
   }
-  return { no: no, date: day, removed: removed, released: released };
+
+  var ss = SpreadsheetApp.getActive();
+  var no2 = p.g + '-' + p.n;
+  var removed = [];
+
+  if (names.length) {
+    var all = subjects_(cfg);
+    var known = {};
+    all.forEach(function (s) { known[s.name] = true; });
+    names.forEach(function (n) { if (!known[n]) throw new Error('과목을 찾을 수 없습니다: ' + n); });
+
+    all.filter(function (s) { return want[s.name]; }).forEach(function (s) {
+      var variants = s.hasB ? ['A', 'B'] : ['A'];
+      variants.forEach(function (k) {
+        var sh = findVariantSheet_(ss, s, k, variants.length);
+        if (!sh) return;
+        var cnt = deleteAllRows_(sh, cfg, p, day);
+        if (cnt) {
+          removed.push({ subject: s.name + (s.hasB ? ' ' + k + '안' : ''),
+                         sheet: sh.getName(), count: cnt });
+        }
+      });
+    });
+  }
+
+  var released = release ? releaseClaim_(no2, day) : 0;
+  CacheService.getScriptCache().remove(STATE_CACHE_KEY);
+
+  if (!removed.length && !released) {
+    throw new Error(no2 + ' 에서 지울 것이 없었습니다.\n' +
+      '서버에 등록·제출 기록이 없는 번호입니다. 그 예비군의 폰에만 번호가 남아 있는 경우이니, ' +
+      '폰에서 번호 옆 자물쇠(🔒)를 누르고 관리자 PIN 을 입력해 번호를 다시 고르게 하십시오.');
+  }
+  return { no: no2, date: day, removed: removed, released: released };
 }
 
 /** 번호가 일치하는 행을 모두 삭제한다. 삭제한 건수를 돌려준다. */
