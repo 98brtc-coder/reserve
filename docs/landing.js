@@ -152,7 +152,7 @@
   /* 폰이 아직 그 번호의 주인인지 서버에 묻는다(쓰지 않는다).
      판단이 안 되거나 통신이 안 되면 아무 것도 지우지 않는다. */
   function verifyMe() {
-    if (!me || !me.c || !UNIT.hasApi()) return;
+    if (!me || fromQuery || !UNIT.hasApi()) return;
     var want = me.g + '-' + me.n;
     UNIT.api('mine', { g: me.g, n: me.n, token: deviceToken(), t: Date.now() })
       .then(function (r) {
@@ -206,7 +206,7 @@
           return;
         }
       }
-      me = { g: g, n: n, d: todayLocal(), c: UNIT.hasApi() };
+      me = { g: g, n: n, d: todayLocal() };
       store(ME_KEY, { at: Date.now(), v: me });
       meNote('');
       showMePanel(false);
@@ -347,13 +347,17 @@
     if (p[0]) q[decodeURIComponent(p[0])] = decodeURIComponent(p[1] || '');
   });
 
+  /* 카드 주소가 번호를 직접 지정한 경우(?g=3&n=7)는 서버 등록을 거치지 않는다.
+     그래서 '등록 주인 확인'을 하면 안 된다. 그 밖의 번호는 모두 확인한다. */
+  var fromQuery = !!(q.g && /^\d+$/.test(q.g));
+
   me = pick(ME_KEY);
   if (me && me.d !== todayLocal()) {            // 지난 회차 번호는 말없이 버린다
     me = null;                                  // 선택 화면이 뜨는 것 자체가 안내다
     try { localStorage.removeItem(ME_KEY); } catch (e) { /* 무시 */ }
   }
-  if (q.g && /^\d+$/.test(q.g)) {
-    me = { g: Number(q.g), d: todayLocal(), c: me ? !!me.c : false,
+  if (fromQuery) {
+    me = { g: Number(q.g), d: todayLocal(),
            n: (q.n && /^\d+$/.test(q.n)) ? Number(q.n) : (me ? me.n : 0) };
     if (!me.n) me = null;                 // 번은 직접 골라야 한다
     else store(ME_KEY, { at: Date.now(), v: me });
@@ -367,14 +371,14 @@
     shown.subjects.forEach(function (s) { s.open = !!(s.urls.A || s.urls.B); });
     shown.survey.open = !!shown.survey.url;
     applyAll(shown);
-    if (q.g && /^\d+$/.test(q.g)) el('selG').value = Number(q.g);
+    if (fromQuery) el('selG').value = Number(q.g);
     return;
   }
 
   isStale = true;
   applyAll(shown);
   verifyMe();
-  if (q.g && /^\d+$/.test(q.g) && !el('mePanel').hidden) el('selG').value = Number(q.g);
+  if (fromQuery && !el('mePanel').hidden) el('selG').value = Number(q.g);
   el('checking').hidden = false;
 
   // 서버가 늦을 때: 안(案)별 링크를 아는 경우에만 응시를 허용한다
