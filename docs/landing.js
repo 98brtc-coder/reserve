@@ -1,5 +1,6 @@
 /* 첫 화면
  *  ① 본인 번호(조-번)를 한 번 선택하면 기억한다.  ?g=3&n=7 로도 지정 가능.
+ *     단, 기억은 '그 날' 것만 유효하고, 서버 등록이 풀렸으면 스스로 지운다.
  *  ② 조에 배정된 안(A/B)의 폼으로만 안내하고, 번호를 미리 채워 준다.
  *  ③ 서버 응답이 늦거나 실패해도 화면이 죽지 않게 한다.
  *     단, 안(案)을 모르면 잘못된 폼으로 보낼 수 있으므로
@@ -130,6 +131,41 @@
     if (keepN) n.value = keepN;
   }
 
+  function meNote(text) {
+    var p = el('meNote');
+    if (!p) return;
+    p.innerHTML = text ? markup(text) : '';
+    p.hidden = !text;
+  }
+
+  /* 서버 등록이 풀렸으면 폰에 남은 번호를 버린다.
+     교관이 번호를 정리했는데 폰만 모르고 있는 상황을 막는다. */
+  function dropMe(text) {
+    me = null;
+    try { localStorage.removeItem(ME_KEY); } catch (e) { /* 무시 */ }
+    el('meBar').hidden = true;
+    el('meUnlock').hidden = true;
+    meNote(text);
+    showMePanel(true);
+  }
+
+  /* 폰이 아직 그 번호의 주인인지 서버에 묻는다(쓰지 않는다).
+     판단이 안 되거나 통신이 안 되면 아무 것도 지우지 않는다. */
+  function verifyMe() {
+    if (!me || !me.c || !UNIT.hasApi()) return;
+    var want = me.g + '-' + me.n;
+    UNIT.api('mine', { g: me.g, n: me.n, token: deviceToken(), t: Date.now() })
+      .then(function (r) {
+        if (!me || (me.g + '-' + me.n) !== want) return;   // 그 사이 바뀌었으면 무시
+        if (!r || r.mine === null || r.mine === undefined) return;
+        if (r.mine === true) return;
+        dropMe(r.claimed
+          ? want + ' 은(는) *다른 사람이 등록한 번호*가 되었습니다.\n본인 번호를 다시 선택하십시오.'
+          : '교관이 ' + want + ' 등록을 *풀었습니다*.\n본인 번호를 다시 선택하십시오.');
+      })
+      .catch(function () { /* 통신 실패 — 그대로 둔다 */ });
+  }
+
   function showMePanel(on) {
     el('mePanel').hidden = !on;
     el('meBar').hidden = on || !me;
@@ -170,8 +206,9 @@
           return;
         }
       }
-      me = { g: g, n: n, d: todayLocal() };
+      me = { g: g, n: n, d: todayLocal(), c: UNIT.hasApi() };
       store(ME_KEY, { at: Date.now(), v: me });
+      meNote('');
       showMePanel(false);
       applyMe();
       render();
@@ -311,9 +348,12 @@
   });
 
   me = pick(ME_KEY);
-  if (me && me.d !== todayLocal()) me = null;   // 지난 회차 번호는 쓰지 않는다
+  if (me && me.d !== todayLocal()) {            // 지난 회차 번호는 말없이 버린다
+    me = null;                                  // 선택 화면이 뜨는 것 자체가 안내다
+    try { localStorage.removeItem(ME_KEY); } catch (e) { /* 무시 */ }
+  }
   if (q.g && /^\d+$/.test(q.g)) {
-    me = { g: Number(q.g), d: todayLocal(),
+    me = { g: Number(q.g), d: todayLocal(), c: me ? !!me.c : false,
            n: (q.n && /^\d+$/.test(q.n)) ? Number(q.n) : (me ? me.n : 0) };
     if (!me.n) me = null;                 // 번은 직접 골라야 한다
     else store(ME_KEY, { at: Date.now(), v: me });
@@ -333,6 +373,7 @@
 
   isStale = true;
   applyAll(shown);
+  verifyMe();
   if (q.g && /^\d+$/.test(q.g) && !el('mePanel').hidden) el('selG').value = Number(q.g);
   el('checking').hidden = false;
 

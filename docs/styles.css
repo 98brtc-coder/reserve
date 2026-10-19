@@ -335,6 +335,15 @@ input[type=date] { width: auto; min-width: 150px; }
 }
 .me-row button { margin-left: auto; }
 .me-hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.me-note {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: rgba(200, 162, 74, .14);
+  border: 1px solid rgba(200, 162, 74, .5);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
 
 .mebar {
   display: flex; align-items: center; gap: 10px;
