@@ -18,6 +18,8 @@ var ROSTER_SHEET = '명단';
 var CLAIMS_SHEET = '등록';
 var CLAIM_HEADER = ['날짜', '번호', '조', '번', '등록시각', '기기', '비고'];
 var STATE_CACHE_KEY = 'public_state_v3';
+var CLAIMS_CACHE_KEY = 'claims_map_v1';
+var CLAIMS_CACHE_SEC = 5;
 var STATE_CACHE_SEC = 5;
 
 var GUIDE_DEFAULT = [
@@ -42,7 +44,10 @@ var DEFAULTS = [
   ['조개수', '50', '전체 조 수(m). 명단 시트가 있으면 명단이 우선합니다.'],
   ['조별인원', '10', '조당 인원(n).'],
   ['안배정', 'ABBA', 'A/B안 배정 패턴을 1조부터 반복 적용합니다. 비우면 전 조 A안.'],
-  ['개방조', '전체', '응시를 허용할 조. "전체" / "없음" / "1-10,15,22-25" 형식.'],
+  ['개방조', '없음', '과목 시트의 개방조가 비었을 때 쓰는 기본값. "전체" / "없음" / "1~10,15" 형식.'],
+  ['자동마감시각', '22', '매일 이 시각(0~23)에 전 과목·설문을 자동으로 닫습니다. 비우면 자동마감 없음.'],
+  ['개방기준일', '', '개방 설정을 마지막으로 바꾼 날짜. 자동 기록되므로 손대지 마십시오.'],
+  ['마지막자동마감', '', '자동마감이 실행된 시각. 자동 기록.'],
   ['번호열', '', '번호(조-번) 열 제목. 비우면 자동 탐색.'],
   ['점수열', '', '점수 열 제목/번호를 쉼표로. 비우면 자동 탐색.'],
   ['점수계산', '합계', '합계 / 평균 — 점수열이 여러 개일 때.']
@@ -154,11 +159,17 @@ function onOpen() {
     .addItem('설문 열기', 'menuSurveyOpen')
     .addItem('설문 닫기', 'menuSurveyClose')
     .addSeparator()
+    .addItem('지금 전부 마감', 'menuAutoCloseNow')
+    .addItem('자동 마감 켜기 / 갱신', 'menuAutoCloseOn')
+    .addItem('자동 마감 끄기', 'menuAutoCloseOff')
+    .addSeparator()
     .addItem('문제 순서 섞기 켜기', 'menuShuffleOn')
     .addItem('자동입력 점검 / 복구', 'menuCheckPrefill')
     .addItem('응답 시트 다시 찾기', 'menuRefindSheets')
     .addItem('링크 캐시 비우기', 'menuClearLinks')
     .addItem('종합 순위 보기', 'menuSummary')
+    .addSeparator()
+    .addItem('진단 (상태 찍어보기)', 'menuDiagnose')
     .addToUi();
 }
 
@@ -311,6 +322,9 @@ function handle_(p) {
       return json_({ ok: true,
         data: claimNumber_(readConfig_(), p.g, p.n, p.token) });
     }
+    if (action === 'mine') {
+      return json_({ ok: true, data: claimStatus_(p.g, p.n, p.token) });
+    }
 
     var cfg = readConfig_();
     requirePin_(cfg, p.pin);
@@ -371,14 +385,25 @@ function readConfig_() {
   return cfg;
 }
 
+/* 시트는 "2026-10-18" 같은 값을 날짜로 바꿔 저장해 버린다.
+   그러면 문자열 비교가 영원히 어긋나므로, 날짜·시각 항목은 텍스트로 박아 둔다. */
+var TEXT_KEYS = { '개방기준일': true, '마지막자동마감': true };
+
 function setConfig_(key, value) {
   var sh = settingsSheet_();
   var n = sh.getLastRow() - 1;
   var keys = n > 0 ? sh.getRange(2, 1, n, 1).getValues() : [];
+  var row = 0;
   for (var i = 0; i < keys.length; i++) {
-    if (String(keys[i][0]).trim() === key) { sh.getRange(i + 2, 2).setValue(value); return; }
+    if (String(keys[i][0]).trim() === key) { row = i + 2; break; }
   }
-  sh.getRange(sh.getLastRow() + 1, 1, 1, 2).setValues([[key, value]]);
+  if (!row) {
+    row = sh.getLastRow() + 1;
+    sh.getRange(row, 1).setValue(key);
+  }
+  var cell = sh.getRange(row, 2);
+  if (TEXT_KEYS[key]) { try { cell.setNumberFormat('@'); } catch (e) { /* 무시 */ } }
+  cell.setValue(value);
 }
 
 function truthy_(v) {
@@ -505,6 +530,7 @@ function setOpenGroups_(cfg, subjectName, spec) {
     }
   });
 
+  setConfig_('개방기준일', todayKey_());
   CacheService.getScriptCache().remove(STATE_CACHE_KEY);
   return {
     subject: want || '*', openGroups: text, formOpen: shouldOpen,
@@ -605,6 +631,13 @@ function cachedState_() {
 
 function publicState_(cfg) {
   var maxG = parseInt(cfg['조개수'], 10) || 50;
+
+  /* 개방 설정은 '그 날' 것만 유효하다.
+     전날 설정이 남아 있으면 닫힌 것으로 본다.
+     실제 마감은 자동마감 트리거와 관리자 접속 시 보정으로 처리된다. */
+  var baseDay = claimDayOf_(cfg['개방기준일']);
+  var stale = !!baseDay && baseDay !== todayKey_();
+
   return {
     unitName: String(cfg['부대명'] || ''),
     notice: String(cfg['공지'] || ''),
@@ -621,7 +654,7 @@ function publicState_(cfg) {
       var og = subjectOpen_(cfg, s, maxG);
       return {
         name: s.name,
-        open: s.open,
+        open: stale ? false : s.open,
         hasB: !!s.hasB,
         openGroups: og.list,                  // null 이면 조 제한 없음
         urls: { A: a.view, B: b.view },
@@ -629,7 +662,7 @@ function publicState_(cfg) {
       };
     }),
     survey: {
-      open: truthy_(cfg['설문개방']),
+      open: stale ? false : truthy_(cfg['설문개방']),
       url: surveyViewUrl_(cfg),
       closedMessage: String(cfg['설문마감안내'] || '')
     }
@@ -732,6 +765,17 @@ function setAccepting_(form, open, label) {
     }
     throw err;
   }
+
+  /* 실제로 바뀌었는지 되읽어 확인한다.
+     미게시 폼 등에서는 예외 없이 무시되는 경우가 있어,
+     "열었습니다" 만 뜨고 실제로는 닫혀 있는 사고가 생긴다. */
+  var now = null;
+  try { now = form.isAcceptingResponses(); } catch (e) { now = null; }
+  if (now !== null && now !== open) {
+    throw new Error(label + ' 폼의 응답 수락 상태가 바뀌지 않았습니다(요청 ' +
+      (open ? '열기' : '닫기') + ', 실제 ' + (now ? '열림' : '닫힘') + ').\n' +
+      '폼 편집 화면 우측 상단이 "게시됨" 인지, 편집링크가 그 폼의 것인지 확인하십시오.');
+  }
 }
 
 /**
@@ -771,6 +815,7 @@ function toggleSurvey_(cfg, open, warnings) {
     warnings.push('설문 폼 편집링크가 없어 화면 표시만 바뀝니다');
   }
   setConfig_('설문개방', open ? '예' : '아니오');
+  setConfig_('개방기준일', todayKey_());
   if (!open) applyClosedMessage_(form, String(cfg['설문마감안내'] || '').trim(), '설문', warnings);
 }
 
@@ -1245,6 +1290,13 @@ function combine_(perSubject, roster, pattern) {
 }
 
 function dashboard_(cfg, day) {
+  /* 전날 개방 설정이 남아 있으면 조용히 전부 닫는다.
+     자동마감 트리거가 돌지 않았을 때의 보정이다. */
+  var baseDay = claimDayOf_(cfg['개방기준일']);
+  if (baseDay && baseDay !== todayKey_()) {
+    try { autoCloseAll(); cfg = readConfig_(); } catch (e) { /* 집계는 계속한다 */ }
+  }
+
   var ss = SpreadsheetApp.getActive();
   var roster = buildRoster_(ss, cfg);
   var subs = subjects_(cfg);
@@ -1295,6 +1347,8 @@ function dashboard_(cfg, day) {
     claims: { count: Object.keys(claims).length, pending: pending },
     groupCount: maxG,
     planPattern: String(pattern || ''),
+    autoCloseHour: String(cfg['자동마감시각'] || ''),
+    lastAutoClose: stampText_(cfg['마지막자동마감']),
     survey: { open: truthy_(cfg['설문개방']) },
     subjects: perSubject,
     combined: combine_(perSubject, roster, pattern),
@@ -1456,6 +1510,60 @@ function finishQuestion_(q) {
 }
 
 /* ===================================================================
+ *  자동 마감
+ * ===================================================================
+ *  하루가 끝나면 전 과목·설문을 닫아 다음 회차에 열린 채로 남지 않게 한다.
+ *  시트 메뉴에서 매일 실행되는 트리거를 걸어 둔다.
+ * =================================================================== */
+
+function autoCloseAll() {
+  var cfg = readConfig_();
+  var notes = [];
+  try {
+    var r = setOpenGroups_(cfg, '*', '없음');
+    notes.push('평가 ' + r.applied.length + '과목 마감' + (r.warning ? ' (' + r.warning + ')' : ''));
+  } catch (err) { notes.push('평가 마감 실패: ' + ((err && err.message) ? err.message : err)); }
+
+  var w = [];
+  try { toggleSurvey_(readConfig_(), false, w); notes.push('설문 마감'); }
+  catch (err) { notes.push('설문 마감 실패: ' + ((err && err.message) ? err.message : err)); }
+
+  setConfig_('마지막자동마감',
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm'));
+  CacheService.getScriptCache().remove(STATE_CACHE_KEY);
+  return notes.join(' / ');
+}
+
+function menuAutoCloseOn() {
+  var cfg = readConfig_();
+  var hour = parseInt(cfg['자동마감시각'], 10);
+  if (isNaN(hour) || hour < 0 || hour > 23) {
+    SpreadsheetApp.getUi().alert('설정 시트의 "자동마감시각" 에 0~23 사이 숫자를 적어 주십시오.');
+    return;
+  }
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'autoCloseAll') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('autoCloseAll').timeBased().everyDays(1).atHour(hour).create();
+  SpreadsheetApp.getUi().alert('자동 마감 켜짐',
+    '매일 ' + hour + '시경 전 과목과 설문을 자동으로 닫습니다.\n' +
+    '(구글 정책상 ' + hour + '시~' + ((hour + 1) % 24) + '시 사이에 실행됩니다)',
+    SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+function menuAutoCloseOff() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'autoCloseAll') { ScriptApp.deleteTrigger(t); n++; }
+  });
+  SpreadsheetApp.getUi().alert(n ? '자동 마감을 해제했습니다.' : '걸려 있는 자동 마감이 없었습니다.');
+}
+
+function menuAutoCloseNow() {
+  SpreadsheetApp.getUi().alert('지금 전부 마감', autoCloseAll(), SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+/* ===================================================================
  *  번호 등록(선점)
  * ===================================================================
  *  예비군이 첫 화면에서 조-번을 확정하면 그 번호를 그 날짜에 잠근다.
@@ -1480,6 +1588,15 @@ function claimsSheet_(create) {
 }
 
 /* 시트가 값을 날짜로 바꿔 저장해 버린 경우까지 견디도록 관대하게 읽는다. */
+/* 시트가 Date 로 바꿔 저장했을 수도 있는 '시각' 값을 읽기 좋게 */
+function stampText_(v) {
+  if (v === null || v === undefined || v === '') return '';
+  if (Object.prototype.toString.call(v) === '[object Date]') {
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  }
+  return String(v);
+}
+
 function claimDayOf_(v) {
   if (v === null || v === undefined || v === '') return '';
   if (Object.prototype.toString.call(v) === '[object Date]') return dayKey_(v);
@@ -1518,6 +1635,41 @@ function readClaims_(day) {
   return map;
 }
 
+/** 등록 현황 캐시. 등록·해제 때마다 반드시 비운다. */
+function dropClaimsCache_() {
+  try { CacheService.getScriptCache().remove(CLAIMS_CACHE_KEY + '_' + todayKey_()); } catch (e) { /* 무시 */ }
+}
+
+function cachedClaims_(day) {
+  var cache = CacheService.getScriptCache();
+  var key = CLAIMS_CACHE_KEY + '_' + day;
+  try {
+    var hit = cache.get(key);
+    if (hit) return JSON.parse(hit);
+  } catch (e) { /* 무시 */ }
+  var map = readClaims_(day);
+  try { cache.put(key, JSON.stringify(map), CLAIMS_CACHE_SEC); } catch (e) { /* 무시 */ }
+  return map;
+}
+
+/** 이 기기가 아직 그 번호의 주인인지 확인한다(쓰지 않는다).
+ *  mine === null 은 '판단 불가'로, 폰은 아무 것도 지우지 않는다. */
+function claimStatus_(g, n, token) {
+  var p = parseNo_(String(g) + '-' + String(n));
+  var day = todayKey_();
+  if (!p) return { no: '', date: day, claimed: false, mine: null };
+  var no = p.g + '-' + p.n;
+  var tk = String(token === null || token === undefined ? '' : token).trim();
+  if (!tk) return { no: no, date: day, claimed: false, mine: null };
+  var cur = cachedClaims_(day)[no];
+  return {
+    no: no, date: day,
+    claimed: !!cur,
+    mine: !!(cur && cur.token && cur.token === tk),
+    at: cur ? cur.at : null
+  };
+}
+
 function claimNumber_(cfg, g, n, token) {
   var p = parseNo_(String(g) + '-' + String(n));
   if (!p) throw new Error('번호가 올바르지 않습니다.');
@@ -1546,6 +1698,7 @@ function claimNumber_(cfg, g, n, token) {
         var rw = csh.getLastRow();
         csh.getRange(rw, 1, 1, 2).setNumberFormat('@').setValues([[day, no]]);
       } catch (e) { /* 무시 */ }
+      dropClaimsCache_();
     }
     return { ok: true, taken: false, no: no, date: day };
   } finally { if (locked) lock.releaseLock(); }
@@ -1563,6 +1716,7 @@ function releaseClaim_(no, day) {
     rows.push(i + 2);
   });
   rows.sort(function (a, b) { return b - a; }).forEach(function (r) { sh.deleteRow(r); });
+  if (rows.length) dropClaimsCache_();
   return rows.length;
 }
 
@@ -1730,6 +1884,66 @@ function deleteAllRows_(sh, cfg, p, day) {
   // 아래에서부터 지워야 행 번호가 밀리지 않는다
   rows.sort(function (a, b) { return b - a; }).forEach(function (r) { sh.deleteRow(r); });
   return rows.length;
+}
+
+/**
+ * 지금 시트와 폼이 실제로 어떤 상태인지 한 번에 보여 준다.
+ * 메뉴는 편집기의 최신 코드로 실행되므로 배포 여부와 무관하다.
+ */
+function menuDiagnose() {
+  var ss = SpreadsheetApp.getActive();
+  var cfg = readConfig_();
+  var L = [];
+  L.push('[환경]');
+  L.push('시트 이름 : ' + ss.getName());
+  L.push('시트 ID   : ' + ss.getId());
+  L.push('시간대    : ' + Session.getScriptTimeZone());
+  L.push('오늘      : ' + todayKey_());
+  L.push('');
+  L.push('[설정 값]');
+  ['설문개방', '개방조', '개방기준일', '마지막자동마감', '자동마감시각', '조개수', '안배정']
+    .forEach(function (k) { L.push(k + ' = [' + String(cfg[k]) + ']'); });
+  L.push('개방기준일(해석) = [' + claimDayOf_(cfg['개방기준일']) + ']  ← 오늘과 같아야 정상');
+  L.push('');
+
+  var sh = settingsSheet_();
+  L.push('[설정 시트] ' + sh.getLastRow() + '행 x ' + sh.getLastColumn() + '열');
+  var wide = Math.min(sh.getLastColumn(), 3);
+  var rows = sh.getRange(1, 1, sh.getLastRow(), wide).getValues();
+  rows.forEach(function (r, i) {
+    var k = String(r[0]).trim();
+    if (k === '설문개방' || k === '개방기준일' || k === '마지막자동마감') {
+      L.push('  ' + (i + 1) + '행: ' + JSON.stringify(r));
+    }
+  });
+  L.push('');
+
+  L.push('[트리거]');
+  var tg = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === 'autoCloseAll';
+  });
+  L.push('autoCloseAll 트리거 ' + tg.length + '개');
+  L.push('');
+
+  L.push('[설문 폼]');
+  var edit = String(cfg['설문폼_편집링크'] || '').trim();
+  if (!edit) { L.push('편집링크 없음'); }
+  else {
+    try {
+      var f = openForm_(edit, '설문폼');
+      L.push('제목      : ' + f.getTitle());
+      L.push('응답 수락 : ' + f.isAcceptingResponses());
+      try { L.push('게시 여부 : ' + (typeof f.isPublished === 'function' ? f.isPublished() : '(미지원)')); }
+      catch (e) { L.push('게시 여부 : 확인 불가'); }
+    } catch (err) { L.push('폼 열기 실패: ' + ((err && err.message) ? err.message : err)); }
+  }
+
+  var txt = L.join('\n');
+  Logger.log(txt);                       // 편집기에서 실행하면 '실행 로그' 에 찍힌다
+  // 시트 메뉴에서 실행했을 때만 창으로 보여 준다
+  try { SpreadsheetApp.getUi().alert('진단', txt, SpreadsheetApp.getUi().ButtonSet.OK); }
+  catch (e) { /* 편집기 실행 — 로그로 충분하다 */ }
+  return txt;
 }
 
 /** 편집기에서 직접 실행해 동작을 확인할 때 사용 */
